@@ -1,0 +1,64 @@
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuthenticatedUser, ApiAuthError } from "@/lib/api/requireUser";
+import { connectToDatabase } from "@/lib/mongodb";
+import { PushSubscriptionModel } from "@/models/PushSubscription";
+
+export const runtime = "nodejs";
+
+export async function POST(request: NextRequest) {
+  try {
+    const user = await requireAuthenticatedUser(request);
+    const body = await request.json().catch(() => null);
+
+    if (!body || !body.endpoint || !body.keys?.p256dh || !body.keys?.auth) {
+      return NextResponse.json(
+        { error: { message: "Invalid push subscription object.", code: "VALIDATION_ERROR" } },
+        { status: 400 }
+      );
+    }
+
+    await connectToDatabase();
+    await PushSubscriptionModel.findOneAndUpdate(
+      { firebaseUid: user.uid, endpoint: body.endpoint },
+      {
+        $set: {
+          keys: body.keys,
+          expirationTime: body.expirationTime ?? null,
+        },
+      },
+      { upsert: true, new: true }
+    );
+
+    return NextResponse.json({ data: { subscribed: true } });
+  } catch (error) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: { message: error.message, code: error.code } }, { status: error.status });
+    }
+    const message = error instanceof Error ? error.message : "Push subscription failed.";
+    return NextResponse.json({ error: { message, code: "INTERNAL_ERROR" } }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const user = await requireAuthenticatedUser(request);
+    const { searchParams } = new URL(request.url);
+    const endpoint = searchParams.get("endpoint");
+
+    await connectToDatabase();
+    if (endpoint) {
+      await PushSubscriptionModel.deleteOne({ firebaseUid: user.uid, endpoint });
+    } else {
+      await PushSubscriptionModel.deleteMany({ firebaseUid: user.uid });
+    }
+
+    return NextResponse.json({ data: { unsubscribed: true } });
+  } catch (error) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: { message: error.message, code: error.code } }, { status: error.status });
+    }
+    const message = error instanceof Error ? error.message : "Push unsubscription failed.";
+    return NextResponse.json({ error: { message, code: "INTERNAL_ERROR" } }, { status: 500 });
+  }
+}
+
