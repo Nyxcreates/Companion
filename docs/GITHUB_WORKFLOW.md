@@ -216,3 +216,4 @@ git log --oneline -10
 | Pull latest | `git pull` |
 | View log | `git log --oneline -10` |
 | View last commit | `git show --stat HEAD` |
+
