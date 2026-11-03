@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "712029387866",
+    "project_id": "companion-de741",
+    "storage_bucket": "companion-de741.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:712029387866:android:aeb03eee00e9b28a566c63",
+        "android_client_info": {
+          "package_name": "Companion.company"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "712029387866-49atghdv9co01ntr30tbbllq89f45p7u.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDfhHx9xFu01NKx3gZjWc4PLqwwb6J5rfY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "712029387866-49atghdv9co01ntr30tbbllq89f45p7u.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
