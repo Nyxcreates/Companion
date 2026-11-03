@@ -1,0 +1,62 @@
+import type { Metadata, Viewport } from "next";
+import { Quicksand, Inter } from "next/font/google";
+import { AuthProvider } from "@/context/AuthContext";
+import { ToastProvider } from "@/context/ToastContext";
+import { ProfileProvider } from "@/context/ProfileContext";
+import { WorldThemeContextProvider } from "@/context/WorldThemeContext";
+import { NotificationProvider } from "@/context/NotificationContext";
+import { UsageProvider } from "@/context/UsageContext";
+import { MotionProvider } from "@/components/providers/MotionProvider";
+import { StartupSequence } from "@/components/startup/StartupSequence";
+import "./globals.css";
+
+const quicksand = Quicksand({
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  variable: "--font-display",
+  display: "swap",
+});
+
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-body",
+  display: "swap",
+});
+
+export const metadata: Metadata = {
+  title: "Companion",
+  description: "A small presence for your everyday life.",
+  manifest: "/manifest.json",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#0b0b1e",
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en" className={`dark ${quicksand.variable} ${inter.variable}`} suppressHydrationWarning>
+      <body>
+        <AuthProvider>
+          <ToastProvider>
+            <ProfileProvider>
+              <WorldThemeContextProvider>
+                <NotificationProvider>
+                  <UsageProvider>
+                    <MotionProvider>
+                      {children}
+                      <StartupSequence />
+                    </MotionProvider>
+                  </UsageProvider>
+                </NotificationProvider>
+              </WorldThemeContextProvider>
+            </ProfileProvider>
+          </ToastProvider>
+        </AuthProvider>
+      </body>
+    </html>
+  );
+}
