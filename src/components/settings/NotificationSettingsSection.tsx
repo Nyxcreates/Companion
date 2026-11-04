@@ -132,9 +132,11 @@ export function NotificationSettingsSection() {
   };
 
   const handleToggleCategory = async (cat: NotificationCategory) => {
+    const currentCategories = preferences.categoriesEnabled ?? {};
+    const isCurrentlyEnabled = currentCategories[cat] !== false;
     const nextCategories = {
-      ...preferences.categoriesEnabled,
-      [cat]: !preferences.categoriesEnabled[cat],
+      ...currentCategories,
+      [cat]: !isCurrentlyEnabled,
     };
     await updatePreferences({ categoriesEnabled: nextCategories });
   };
@@ -160,20 +162,30 @@ export function NotificationSettingsSection() {
   };
 
   const handleToggleNativeFloating = () => {
-    const bridge = (window as unknown as { CompanionNative?: CompanionNativeInterface }).CompanionNative;
-    const nextState = !floatingEnabled;
-    setFloatingEnabled(nextState);
-    if (bridge?.toggleFloatingNikki) {
-      bridge.toggleFloatingNikki(nextState);
+    if (typeof window === "undefined") return;
+    try {
+      const bridge = (window as unknown as { CompanionNative?: CompanionNativeInterface }).CompanionNative;
+      const nextState = !floatingEnabled;
+      setFloatingEnabled(nextState);
+      if (bridge?.toggleFloatingNikki) {
+        bridge.toggleFloatingNikki(nextState);
+      }
+    } catch (e) {
+      console.warn("CompanionNative bridge unavailable", e);
     }
   };
 
   const handleToggleNativeUsage = () => {
-    const bridge = (window as unknown as { CompanionNative?: CompanionNativeInterface }).CompanionNative;
-    const nextState = !usageTrackingEnabled;
-    setUsageTrackingEnabled(nextState);
-    if (bridge?.toggleAppUsageTracking) {
-      bridge.toggleAppUsageTracking(nextState);
+    if (typeof window === "undefined") return;
+    try {
+      const bridge = (window as unknown as { CompanionNative?: CompanionNativeInterface }).CompanionNative;
+      const nextState = !usageTrackingEnabled;
+      setUsageTrackingEnabled(nextState);
+      if (bridge?.toggleAppUsageTracking) {
+        bridge.toggleAppUsageTracking(nextState);
+      }
+    } catch (e) {
+      console.warn("CompanionNative bridge unavailable", e);
     }
   };
 
@@ -372,7 +384,7 @@ export function NotificationSettingsSection() {
             min={15}
             max={180}
             step={5}
-            value={preferences.breakIntervalMinutes}
+            value={preferences.breakIntervalMinutes ?? 45}
             onChange={(e) =>
               updatePreferences({ breakIntervalMinutes: Number(e.target.value) })
             }
@@ -389,7 +401,7 @@ export function NotificationSettingsSection() {
             min={30}
             max={240}
             step={15}
-            value={preferences.waterIntervalMinutes}
+            value={preferences.waterIntervalMinutes ?? 60}
             onChange={(e) =>
               updatePreferences({ waterIntervalMinutes: Number(e.target.value) })
             }
@@ -428,7 +440,9 @@ export function NotificationSettingsSection() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
           {NOTIFICATION_CATEGORIES.map((cat) => {
             const meta = CATEGORY_META[cat];
-            const isEnabled = preferences.categoriesEnabled[cat] !== false;
+            const isEnabled = preferences.categoriesEnabled
+              ? preferences.categoriesEnabled[cat] !== false
+              : true;
 
             return (
               <div

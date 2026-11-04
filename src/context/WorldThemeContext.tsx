@@ -33,16 +33,24 @@ export function WorldThemeContextProvider({ children }: { children: ReactNode })
 
   const [theme, setThemeState] = useState<AppTheme>(() => {
     if (typeof window !== "undefined") {
-      const stored = localStorage.getItem(THEME_STORAGE_KEY);
-      if (stored === "light" || stored === "dark") return stored;
+      try {
+        const stored = localStorage.getItem(THEME_STORAGE_KEY);
+        if (stored === "light" || stored === "dark") return stored;
+      } catch {
+        // Fallback if localStorage access is restricted
+      }
     }
     return "dark";
   });
 
   const [livingEnvironment, setLivingEnvironmentState] = useState<LivingEnvironmentId>(() => {
     if (typeof window !== "undefined") {
-      const stored = localStorage.getItem(ENVIRONMENT_STORAGE_KEY);
-      if (stored) return normalizeLivingEnvironmentId(stored);
+      try {
+        const stored = localStorage.getItem(ENVIRONMENT_STORAGE_KEY);
+        if (stored) return normalizeLivingEnvironmentId(stored);
+      } catch {
+        // Fallback if localStorage access is restricted
+      }
     }
     return "cosmic-dream";
   });
@@ -51,18 +59,22 @@ export function WorldThemeContextProvider({ children }: { children: ReactNode })
   useEffect(() => {
     if (typeof document === "undefined") return;
 
-    const root = document.documentElement;
-    if (theme === "light") {
-      root.classList.remove("dark");
-      root.classList.add("light");
-      root.setAttribute("data-theme", "light");
-    } else {
-      root.classList.remove("light");
-      root.classList.add("dark");
-      root.setAttribute("data-theme", "dark");
-    }
+    try {
+      const root = document.documentElement;
+      if (theme === "light") {
+        root.classList.remove("dark");
+        root.classList.add("light");
+        root.setAttribute("data-theme", "light");
+      } else {
+        root.classList.remove("light");
+        root.classList.add("dark");
+        root.setAttribute("data-theme", "dark");
+      }
 
-    root.setAttribute("data-environment", livingEnvironment);
+      root.setAttribute("data-environment", livingEnvironment);
+    } catch {
+      // Safe fallback
+    }
   }, [theme, livingEnvironment]);
 
   // Synchronize with database profile when loaded
@@ -70,14 +82,22 @@ export function WorldThemeContextProvider({ children }: { children: ReactNode })
     if (profile?.theme && (profile.theme === "dark" || profile.theme === "light")) {
       setThemeState(profile.theme);
       if (typeof window !== "undefined") {
-        localStorage.setItem(THEME_STORAGE_KEY, profile.theme);
+        try {
+          localStorage.setItem(THEME_STORAGE_KEY, profile.theme);
+        } catch {
+          // Safe fallback
+        }
       }
     }
     if (profile?.livingEnvironment) {
       const normalized = normalizeLivingEnvironmentId(profile.livingEnvironment);
       setLivingEnvironmentState(normalized);
       if (typeof window !== "undefined") {
-        localStorage.setItem(ENVIRONMENT_STORAGE_KEY, normalized);
+        try {
+          localStorage.setItem(ENVIRONMENT_STORAGE_KEY, normalized);
+        } catch {
+          // Safe fallback
+        }
       }
     }
   }, [profile?.theme, profile?.livingEnvironment]);
@@ -91,8 +111,12 @@ export function WorldThemeContextProvider({ children }: { children: ReactNode })
       setLivingEnvironmentState(nextEnv);
 
       if (typeof window !== "undefined") {
-        if (settings.theme) localStorage.setItem(THEME_STORAGE_KEY, settings.theme);
-        if (settings.livingEnvironment) localStorage.setItem(ENVIRONMENT_STORAGE_KEY, settings.livingEnvironment);
+        try {
+          if (settings.theme) localStorage.setItem(THEME_STORAGE_KEY, settings.theme);
+          if (settings.livingEnvironment) localStorage.setItem(ENVIRONMENT_STORAGE_KEY, settings.livingEnvironment);
+        } catch {
+          // Safe fallback
+        }
       }
 
       // Persist to database profile if authenticated

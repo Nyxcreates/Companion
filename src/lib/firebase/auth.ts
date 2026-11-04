@@ -133,12 +133,13 @@ export function getAuthErrorMessage(error: unknown): string {
       return "Your browser blocked the Google sign-in popup. Please allow popups for this site, or try again.";
 
     // ── Domain / configuration errors ─────────────────────────────────────────
-    case "auth/unauthorized-domain":
+    case "auth/unauthorized-domain": {
+      const currentHost = typeof window !== "undefined" ? window.location.hostname : "your current domain";
       return (
-        "This domain is not authorized for Google sign-in. " +
-        "In Firebase Console → Authentication → Settings → Authorized Domains, " +
-        "add your Vercel domain (e.g. your-app.vercel.app), then try again."
+        `This domain is not authorized (${currentHost}). ` +
+        `In Firebase Console → Authentication → Settings → Authorized domains, add "${currentHost}" and try again.`
       );
+    }
     case "auth/operation-not-allowed":
       return "Google sign-in is not enabled for this Firebase project. Enable it in Firebase Console → Authentication → Sign-in method.";
 

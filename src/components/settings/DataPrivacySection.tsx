@@ -92,7 +92,7 @@ export function DataPrivacySection() {
     }
   }
 
-  const total = counts ? DATA_SCOPES.reduce((sum, s) => sum + counts[s], 0) : 0;
+  const total = counts ? DATA_SCOPES.reduce((sum, s) => sum + (counts[s] ?? 0), 0) : 0;
   const isAll = pending === "all";
   const canConfirm = !working && (!isAll || typed.trim() === CONFIRM_ALL_PHRASE);
 
