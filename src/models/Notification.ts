@@ -1,29 +1,10 @@
 import mongoose, { Schema, type Document, type Model } from "mongoose";
+import {
+  NOTIFICATION_CATEGORIES,
+  type NotificationCategory,
+} from "@/lib/notifications/categories";
 
-export type NotificationCategory =
-  | "task_reminder"
-  | "goal_deadline"
-  | "timetable_reminder"
-  | "focus_reminder"
-  | "break_reminder"
-  | "wellbeing_water_food"
-  | "mood_checkin"
-  | "sleep_reminder"
-  | "commitment_reminder"
-  | "nikki_supportive";
-
-export const NOTIFICATION_CATEGORIES: NotificationCategory[] = [
-  "task_reminder",
-  "goal_deadline",
-  "timetable_reminder",
-  "focus_reminder",
-  "break_reminder",
-  "wellbeing_water_food",
-  "mood_checkin",
-  "sleep_reminder",
-  "commitment_reminder",
-  "nikki_supportive",
-];
+export { NOTIFICATION_CATEGORIES, type NotificationCategory };
 
 export interface NotificationDocument extends Document {
   firebaseUid: string;

@@ -1,4 +1,4 @@
-import type { NotificationCategory } from "@/models/Notification";
+import type { NotificationCategory } from "@/lib/notifications/categories";
 import type { CheckInFrequency, FloatingPresenceMode, LearnedInterventionWeights } from "@/models/NotificationPreference";
 
 export type { NotificationCategory, CheckInFrequency, FloatingPresenceMode, LearnedInterventionWeights };

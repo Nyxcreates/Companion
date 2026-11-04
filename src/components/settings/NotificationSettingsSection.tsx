@@ -22,7 +22,7 @@ import {
 import { useNotifications } from "@/context/NotificationContext";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { NOTIFICATION_CATEGORIES, type NotificationCategory } from "@/models/Notification";
+import { NOTIFICATION_CATEGORIES, type NotificationCategory } from "@/lib/notifications/categories";
 
 interface CompanionNativeInterface {
   isNativeApp?: () => boolean;
