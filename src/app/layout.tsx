@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Quicksand, Inter } from "next/font/google";
+import localFont from "next/font/local";
 import { AuthProvider } from "@/context/AuthContext";
 import { ToastProvider } from "@/context/ToastContext";
 import { ProfileProvider } from "@/context/ProfileContext";
@@ -10,16 +10,14 @@ import { MotionProvider } from "@/components/providers/MotionProvider";
 import { StartupSequence } from "@/components/startup/StartupSequence";
 import "./globals.css";
 
-const quicksand = Quicksand({
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
+const quicksand = localFont({
+  src: "./fonts/Quicksand-Variable.woff2",
   variable: "--font-display",
   display: "swap",
 });
 
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
+const inter = localFont({
+  src: "./fonts/Inter-Variable.woff2",
   variable: "--font-body",
   display: "swap",
 });
