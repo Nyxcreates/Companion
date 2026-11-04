@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { CharacterPlaceholder } from "@/components/character/CharacterPlaceholder";
 import { FirebaseConfigNotice } from "@/components/dev/FirebaseConfigNotice";
+import { useAuth } from "@/context/AuthContext";
 import {
   signInWithEmail,
   signInWithGoogle,
@@ -21,6 +22,7 @@ type View = "login" | "forgot";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { firebaseUser, loading: authLoading } = useAuth();
   const [view, setView] = useState<View>("login");
 
   // ── Login state ────────────────────────────────────────────────────────────
@@ -38,23 +40,28 @@ export default function LoginPage() {
   const [resetSent, setResetSent] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
 
-  // ── Handle Google redirect result on page load ─────────────────────────────
+  // If user is already authenticated (or becomes authenticated), route to dashboard
   useEffect(() => {
-    setGoogleLoading(true);
+    if (!authLoading && firebaseUser) {
+      router.replace("/dashboard");
+    }
+  }, [firebaseUser, authLoading, router]);
+
+  // Handle Google redirect return silently if one completed — NEVER show an error on initial load
+  useEffect(() => {
     handleGoogleRedirectResult()
       .then((result) => {
         if (result?.user) {
-          router.push("/dashboard");
+          router.replace("/dashboard");
         }
       })
       .catch((err) => {
-        setError(getAuthErrorMessage(err));
-      })
-      .finally(() => setGoogleLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+        // Only log in dev/console — never inject a false error on page load
+        console.debug("[Companion Auth] No redirect session to resolve:", err);
+      });
+  }, [router]);
 
-  // ── Resend cooldown countdown ──────────────────────────────────────────────
+  // Resend cooldown countdown
   useEffect(() => {
     if (resendCooldown <= 0) return;
     const id = setInterval(() => {
@@ -69,7 +76,7 @@ export default function LoginPage() {
     return () => clearInterval(id);
   }, [resendCooldown]);
 
-  // ── Handlers ───────────────────────────────────────────────────────────────
+  // Handlers
   async function handleEmailLogin(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -78,6 +85,7 @@ export default function LoginPage() {
       await signInWithEmail(email, password);
       router.push("/dashboard");
     } catch (err) {
+      console.error("[Companion Auth] Email login failed:", err);
       setError(getAuthErrorMessage(err));
     } finally {
       setEmailLoading(false);
@@ -89,15 +97,15 @@ export default function LoginPage() {
     setGoogleLoading(true);
     try {
       const result = await signInWithGoogle();
-      // result is null when redirect was triggered (page will reload)
       if (result?.user) {
         router.push("/dashboard");
       }
     } catch (err) {
+      console.error("[Companion Auth] Google sign-in failed:", err);
       setError(getAuthErrorMessage(err));
+    } finally {
       setGoogleLoading(false);
     }
-    // Don't set loading=false if redirect was triggered — page reloads anyway
   }
 
   async function handleForgotPassword(e: React.FormEvent) {
@@ -109,7 +117,6 @@ export default function LoginPage() {
       setResetSent(true);
       setResendCooldown(60);
     } catch (err) {
-      // Deliberately generic — don't reveal whether the email exists
       const code = (err as { code?: string })?.code ?? "";
       if (code === "auth/invalid-email") {
         setResetError("Please enter a valid email address.");
@@ -118,7 +125,7 @@ export default function LoginPage() {
       } else if (code === "auth/network-request-failed") {
         setResetError("Network error. Check your connection and try again.");
       } else {
-        // For user-not-found we show the same success to avoid email enumeration
+        // Obfuscate whether email exists to prevent enumeration
         setResetSent(true);
         setResendCooldown(60);
       }
@@ -150,6 +157,7 @@ export default function LoginPage() {
         <CharacterPlaceholder size={64} />
         <Card className="w-full max-w-sm">
           <button
+            type="button"
             onClick={() => {
               setView("login");
               setResetSent(false);
@@ -169,7 +177,7 @@ export default function LoginPage() {
                 Reset your password
               </h1>
               <p className="text-sm text-ink-muted mb-6">
-                Enter your email and we&apos;ll send you a reset link.
+                Enter your email and we&apos;ll send you a password reset link.
               </p>
 
               <form onSubmit={handleForgotPassword} className="flex flex-col gap-4">
@@ -211,6 +219,7 @@ export default function LoginPage() {
               )}
 
               <button
+                type="button"
                 onClick={handleResend}
                 disabled={resendCooldown > 0 || resetLoading}
                 className="flex items-center gap-1.5 text-sm text-accent-secondary hover:underline disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
@@ -299,7 +308,7 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={() => {
-                setResetEmail(email); // pre-fill with whatever they typed
+                setResetEmail(email);
                 setView("forgot");
                 setError(null);
               }}

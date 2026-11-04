@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">Companion</string>
+    <string name="companion_web_url">https://companion.vercel.app</string>
+    <string name="companion_local_debug_url">http://10.0.2.2:3000</string>
+    <string name="notification_channel_name">Companion &amp; Nikki Reminders</string>
+    <string name="notification_channel_description">Contextual reminders, check-ins, focus prompts, and supportive messages from Nikki.</string>
+    <string name="floating_service_notification_title">Nikki is present</string>
+    <string name="floating_service_notification_text">Tap the floating companion anytime for gentle check-ins or focus help.</string>
+    <string name="offline_title">You\'re offline</string>
+    <string name="offline_message">Companion couldn\'t reach the stars. Reconnect to the internet and tap retry.</string>
+    <string name="retry">Retry</string>
+</resources>
+

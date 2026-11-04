@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { CharacterPlaceholder } from "@/components/character/CharacterPlaceholder";
 import { FirebaseConfigNotice } from "@/components/dev/FirebaseConfigNotice";
+import { useAuth } from "@/context/AuthContext";
 import {
   signUpWithEmail,
   signInWithGoogle,
@@ -18,6 +19,7 @@ import {
 
 export default function SignupPage() {
   const router = useRouter();
+  const { firebaseUser, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -25,21 +27,25 @@ export default function SignupPage() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Handle Google redirect result on page load
+  // If user is already authenticated, route them forward
   useEffect(() => {
-    setGoogleLoading(true);
+    if (!authLoading && firebaseUser) {
+      router.replace("/onboarding");
+    }
+  }, [firebaseUser, authLoading, router]);
+
+  // Handle Google redirect return silently if one completed — never show error on fresh mount
+  useEffect(() => {
     handleGoogleRedirectResult()
       .then((result) => {
         if (result?.user) {
-          router.push("/onboarding");
+          router.replace("/onboarding");
         }
       })
       .catch((err) => {
-        setError(getAuthErrorMessage(err));
-      })
-      .finally(() => setGoogleLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+        console.debug("[Companion Auth] No redirect session to resolve:", err);
+      });
+  }, [router]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -49,6 +55,7 @@ export default function SignupPage() {
       await signUpWithEmail(email, password);
       router.push("/onboarding");
     } catch (err) {
+      console.error("[Companion Auth] Signup failed:", err);
       setError(getAuthErrorMessage(err));
     } finally {
       setEmailLoading(false);
@@ -64,7 +71,9 @@ export default function SignupPage() {
         router.push("/onboarding");
       }
     } catch (err) {
+      console.error("[Companion Auth] Google sign-up failed:", err);
       setError(getAuthErrorMessage(err));
+    } finally {
       setGoogleLoading(false);
     }
   }

@@ -1,0 +1,15 @@
+<resources>
+    <style name="Theme.Companion" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/brand_primary</item>
+        <item name="colorPrimaryVariant">@color/brand_surface</item>
+        <item name="colorOnPrimary">@color/ink_primary</item>
+        <item name="android:statusBarColor">@color/brand_surface</item>
+        <item name="android:navigationBarColor">@color/brand_surface</item>
+        <item name="android:windowBackground">@color/brand_surface</item>
+    </style>
+
+    <style name="Theme.Companion.Splash" parent="Theme.Companion">
+        <item name="android:windowBackground">@color/brand_surface</item>
+    </style>
+</resources>
+

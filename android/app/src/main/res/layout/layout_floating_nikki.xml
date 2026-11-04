@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/floatingRoot"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content">
+
+    <!-- Speech bubble expanded card -->
+    <LinearLayout
+        android:id="@+id/bubbleCard"
+        android:layout_width="220dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="64dp"
+        android:background="@drawable/bg_floating_bubble"
+        android:elevation="8dp"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvNikkiMessage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:text="Heyyy! Time for a short water break? 🌙"
+            android:textColor="@color/ink_primary"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="end"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnFloatingDismiss"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:minWidth="0dp"
+                android:paddingHorizontal="8dp"
+                android:text="I'm ok"
+                android:textColor="@color/ink_muted"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btnFloatingOpenApp"
+                style="@style/Widget.MaterialComponents.Button"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:backgroundTint="@color/brand_cyan"
+                android:minWidth="0dp"
+                android:paddingHorizontal="8dp"
+                android:text="Open"
+                android:textColor="@color/brand_surface"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Floating Avatar Icon -->
+    <FrameLayout
+        android:id="@+id/avatarContainer"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:background="@drawable/bg_floating_avatar"
+        android:elevation="10dp">
+
+        <TextView
+            android:id="@+id/tvNikkiAvatarEmoji"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="✨"
+            android:textSize="26sp" />
+    </FrameLayout>
+
+</FrameLayout>
+

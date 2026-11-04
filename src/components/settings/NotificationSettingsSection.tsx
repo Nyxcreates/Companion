@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Bell,
   Sparkles,
@@ -16,11 +16,24 @@ import {
   Heart,
   Volume2,
   VolumeX,
+  Layers,
+  Activity,
 } from "lucide-react";
 import { useNotifications } from "@/context/NotificationContext";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { NOTIFICATION_CATEGORIES, type NotificationCategory } from "@/models/Notification";
+
+interface CompanionNativeInterface {
+  isNativeApp?: () => boolean;
+  checkFloatingPermission?: () => boolean;
+  requestFloatingPermission?: () => void;
+  toggleFloatingNikki?: (enable: boolean) => void;
+  checkUsageStatsPermission?: () => boolean;
+  requestUsageStatsPermission?: () => void;
+  toggleAppUsageTracking?: (enable: boolean) => void;
+  showToast?: (message: string) => void;
+}
 
 const CATEGORY_META: Record<
   NotificationCategory,
@@ -90,8 +103,26 @@ export function NotificationSettingsSection() {
   const [isSaving, setIsSaving] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
 
+  // Native Android bridge detection
+  const [isNativeApp, setIsNativeApp] = useState(false);
+  const [floatingEnabled, setFloatingEnabled] = useState(false);
+  const [usageTrackingEnabled, setUsageTrackingEnabled] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const bridge = (window as unknown as { CompanionNative?: CompanionNativeInterface }).CompanionNative;
+      if (bridge && typeof bridge.isNativeApp === "function") {
+        setIsNativeApp(true);
+      }
+    }
+  }, []);
+
   if (!preferences) {
-    return null;
+    return (
+      <Card id="notifications" className="p-6">
+        <p className="text-sm text-ink-muted">Loading notification settings...</p>
+      </Card>
+    );
   }
 
   const isPaused = preferences.pausedUntil && new Date(preferences.pausedUntil) > new Date();
@@ -128,12 +159,31 @@ export function NotificationSettingsSection() {
     }
   };
 
+  const handleToggleNativeFloating = () => {
+    const bridge = (window as unknown as { CompanionNative?: CompanionNativeInterface }).CompanionNative;
+    const nextState = !floatingEnabled;
+    setFloatingEnabled(nextState);
+    if (bridge?.toggleFloatingNikki) {
+      bridge.toggleFloatingNikki(nextState);
+    }
+  };
+
+  const handleToggleNativeUsage = () => {
+    const bridge = (window as unknown as { CompanionNative?: CompanionNativeInterface }).CompanionNative;
+    const nextState = !usageTrackingEnabled;
+    setUsageTrackingEnabled(nextState);
+    if (bridge?.toggleAppUsageTracking) {
+      bridge.toggleAppUsageTracking(nextState);
+    }
+  };
+
   return (
     <Card id="notifications" className="flex flex-col gap-6 p-6">
       <div className="flex items-center justify-between border-b border-white/10 pb-4">
         <div>
-          <h2 className="font-display text-lg font-semibold text-ink-primary">
-            Nikki&apos;s Presence & Notifications
+          <h2 className="font-display text-lg font-semibold text-ink-primary flex items-center gap-2">
+            <Bell className="h-5 w-5 text-amber-400" />
+            Nikki&apos;s Presence &amp; Notifications
           </h2>
           <p className="text-xs text-ink-muted mt-0.5">
             Configure how and when Nikki checks in on you, respects quiet hours, and learns your habits.
@@ -154,134 +204,168 @@ export function NotificationSettingsSection() {
         </div>
       </div>
 
-      {/* Main Proactive Check-in Toggle */}
-      <div className="flex items-center justify-between rounded-xl bg-white/[0.03] border border-white/10 p-4">
+      {/* Android Native Features Card */}
+      <div className="rounded-xl border border-cyan-400/30 bg-gradient-to-r from-cyan-950/30 to-slate-900/40 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Smartphone className="h-4 w-4 text-cyan-400" />
+            <h3 className="text-sm font-semibold text-ink-primary">
+              Android Companion Experience
+            </h3>
+          </div>
+          <span className="rounded-full bg-cyan-400/15 border border-cyan-400/30 px-2 py-0.5 text-[10px] font-mono font-medium text-cyan-300">
+            {isNativeApp ? "Active on your device" : "Available on Companion Android"}
+          </span>
+        </div>
+
+        <p className="text-xs text-ink-muted mb-4 leading-relaxed">
+          When using Companion on your Android phone, Nikki can stay by your side outside the app as an interactive floating avatar and offer gentle focus reminders.
+        </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Floating Nikki Toggle */}
+          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-ink-primary flex items-center gap-1.5">
+                  <Layers className="h-3.5 w-3.5 text-cyan-300" />
+                  Floating Nikki Overlay
+                </p>
+                <input
+                  type="checkbox"
+                  checked={floatingEnabled}
+                  onChange={handleToggleNativeFloating}
+                  className="rounded border-white/20 bg-white/10 text-cyan-400 focus:ring-0"
+                />
+              </div>
+              <p className="text-[11px] text-ink-muted mt-1 leading-snug">
+                Draggable avatar on your phone screen while you study or multitask. Tap her anytime to open quick check-ins.
+              </p>
+            </div>
+          </div>
+
+          {/* Phone Balance & Usage Stats Toggle */}
+          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-ink-primary flex items-center gap-1.5">
+                  <Activity className="h-3.5 w-3.5 text-purple-400" />
+                  Phone Usage Balance
+                </p>
+                <input
+                  type="checkbox"
+                  checked={usageTrackingEnabled}
+                  onChange={handleToggleNativeUsage}
+                  className="rounded border-white/20 bg-white/10 text-cyan-400 focus:ring-0"
+                />
+              </div>
+              <p className="text-[11px] text-ink-muted mt-1 leading-snug">
+                Gently nudges you when continuous scrolling on Instagram or YouTube is detected. 100% processed locally on your phone.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Proactive Presence Toggle */}
+      <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] p-4">
         <div>
-          <p className="text-sm font-semibold text-ink-primary">Proactive Check-ins</p>
+          <p className="text-sm font-semibold text-ink-primary">
+            Proactive Check-Ins &amp; Floating Guide
+          </p>
           <p className="text-xs text-ink-muted mt-0.5">
-            Allow Nikki to occasionally initiate supportive interactions based on your work and day.
+            Allow Nikki to appear contextually when you take breaks, finish tasks, or need encouragement.
           </p>
         </div>
-        <button
-          type="button"
+        <Button
+          size="sm"
+          variant={preferences.proactiveEnabled ? "secondary" : "ghost"}
           onClick={handleToggleProactive}
-          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-            preferences.proactiveEnabled ? "bg-cyan-500" : "bg-slate-700"
-          }`}
-          role="switch"
-          aria-checked={preferences.proactiveEnabled}
+          className="text-xs"
         >
-          <span
-            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-              preferences.proactiveEnabled ? "translate-x-5" : "translate-x-0"
-            }`}
-          />
-        </button>
+          {preferences.proactiveEnabled ? "Enabled" : "Disabled"}
+        </Button>
       </div>
 
-      {/* Floating Appearance Mode */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
-        <div>
-          <p className="text-sm font-medium text-ink-primary">Nikki&apos;s Floating Presence</p>
-          <p className="text-xs text-ink-muted">
-            Display Nikki as a small floating companion in the corner of your screen.
-          </p>
-        </div>
-        <div className="flex items-center rounded-xl bg-white/5 border border-white/10 p-1 text-xs">
-          {(["always", "subtle", "off"] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => updatePreferences({ floatingPresence: mode })}
-              className={`rounded-lg px-3 py-1 font-medium capitalize transition-colors ${
-                preferences.floatingPresence === mode
-                  ? "bg-cyan-500 text-slate-950 shadow"
-                  : "text-ink-muted hover:text-white"
-              }`}
-            >
-              {mode}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* Quick Snooze / Pause Controls */}
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold text-ink-primary flex items-center gap-1.5">
+          <Clock className="h-4 w-4 text-cyan-400" />
+          Pause Nikki&apos;s Nudges
+        </h3>
+        <p className="text-xs text-ink-muted">
+          Temporarily quiet all check-ins while you sleep or attend an exam.
+        </p>
 
-      {/* Pause Proactive Check-ins */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
-        <div>
-          <p className="text-sm font-medium text-ink-primary">Pause All Check-ins Temporarily</p>
-          <p className="text-xs text-ink-muted">
-            Need uninterrupted quiet time right now?
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {isPaused ? (
-            <Button size="sm" variant="primary" onClick={() => handlePause(null)}>
-              Resume Check-ins
-            </Button>
-          ) : (
-            <>
-              <Button size="sm" variant="secondary" onClick={() => handlePause(1)} className="text-xs">
-                Pause 1h
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => handlePause(4)} className="text-xs">
-                Pause 4h
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => handlePause(24)} className="text-xs">
-                Today
-              </Button>
-            </>
-          )}
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => handlePause(null)}
+            className="text-xs"
+          >
+            Resume All
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handlePause(1)}
+            className="text-xs"
+          >
+            Pause 1 Hour
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handlePause(3)}
+            className="text-xs"
+          >
+            Pause 3 Hours
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handlePause(8)}
+            className="text-xs"
+          >
+            Pause 8 Hours
+          </Button>
         </div>
       </div>
 
-      {/* Quiet Hours */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-4">
-        <div>
-          <p className="text-sm font-medium text-ink-primary">Quiet Hours</p>
-          <p className="text-xs text-ink-muted">
-            During quiet hours, Nikki suppresses non-urgent reminders and check-ins.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 text-xs">
-          <label className="text-ink-muted">From</label>
-          <input
-            type="time"
-            value={preferences.quietHoursStart ?? "22:30"}
-            onChange={(e) => updatePreferences({ quietHoursStart: e.target.value })}
-            className="rounded-lg border border-white/15 bg-white/5 px-2 py-1 text-white focus:border-cyan-400 focus:outline-none"
-          />
-          <label className="text-ink-muted">To</label>
-          <input
-            type="time"
-            value={preferences.quietHoursEnd ?? "07:00"}
-            onChange={(e) => updatePreferences({ quietHoursEnd: e.target.value })}
-            className="rounded-lg border border-white/15 bg-white/5 px-2 py-1 text-white focus:border-cyan-400 focus:outline-none"
-          />
-        </div>
-      </div>
-
-      {/* Check-in Frequency & Intervals */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-b border-white/10 pb-4">
+      {/* Quiet Hours & Intervals Form */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-white/5 pt-4">
         <div>
           <label className="block text-sm font-medium text-ink-primary mb-1">
-            Check-in Frequency
+            Quiet Hours Start (Evening)
           </label>
-          <select
-            value={preferences.checkInFrequency}
+          <input
+            type="time"
+            value={preferences.quietHoursStart ?? "22:00"}
             onChange={(e) =>
-              updatePreferences({ checkInFrequency: e.target.value as any })
+              updatePreferences({ quietHoursStart: e.target.value })
             }
             className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs text-white focus:border-cyan-400 focus:outline-none"
-          >
-            <option value="gentle">Gentle (Every ~2 hours)</option>
-            <option value="balanced">Balanced (Every ~1 hour)</option>
-            <option value="frequent">Frequent (Every ~30 minutes)</option>
-          </select>
+          />
         </div>
 
         <div>
           <label className="block text-sm font-medium text-ink-primary mb-1">
-            Break Reminder (Minutes of Focus)
+            Quiet Hours End (Morning)
+          </label>
+          <input
+            type="time"
+            value={preferences.quietHoursEnd ?? "08:00"}
+            onChange={(e) =>
+              updatePreferences({ quietHoursEnd: e.target.value })
+            }
+            className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs text-white focus:border-cyan-400 focus:outline-none"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-ink-primary mb-1">
+            Break Reminder Interval (Minutes)
           </label>
           <input
             type="number"
@@ -315,7 +399,7 @@ export function NotificationSettingsSection() {
 
         <div>
           <label className="block text-sm font-medium text-ink-primary mb-1">
-            Browser Notifications
+            Web &amp; Device Notifications
           </label>
           <div className="flex items-center gap-2">
             <Button
@@ -325,10 +409,10 @@ export function NotificationSettingsSection() {
               className="text-xs"
             >
               {browserPermissionStatus === "granted"
-                ? "✓ Push Enabled"
+                ? "✓ Push Notifications Active"
                 : browserPermissionStatus === "denied"
                 ? "Blocked in Browser"
-                : "Enable Browser Notifications"}
+                : "Enable Device Notifications"}
             </Button>
           </div>
         </div>
@@ -411,4 +495,3 @@ export function NotificationSettingsSection() {
     </Card>
   );
 }
-

@@ -34,10 +34,14 @@ export function LivingWorldBackdrop({
   // In focus mode and on dashboard, the world always animates calmly
   const effectiveCalm = calm || isFocus;
 
+  const isContained = className.includes("absolute") || className.includes("relative");
+
   return (
     <div
       aria-hidden="true"
-      className={`fixed inset-0 -z-10 pointer-events-none overflow-hidden transition-opacity duration-1000 ${
+      className={`${
+        isContained ? "w-full h-full" : "fixed inset-0 -z-10"
+      } pointer-events-none overflow-hidden transition-opacity duration-1000 ${
         isFocus ? "opacity-[0.18]" : "opacity-100"
       } ${className}`}
     >

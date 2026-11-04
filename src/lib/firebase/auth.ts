@@ -23,14 +23,6 @@ function requireAuth() {
   return firebaseAuth;
 }
 
-/** Returns true if the current environment is likely to block popups
- *  (mobile browsers, some Safari builds, embedded webviews). */
-function isMobileOrPopupRestricted(): boolean {
-  if (typeof window === "undefined") return false;
-  const ua = navigator.userAgent;
-  return /iPhone|iPad|iPod|Android/i.test(ua);
-}
-
 export async function signUpWithEmail(
   email: string,
   password: string
@@ -47,45 +39,44 @@ export async function signInWithEmail(
 
 /**
  * Sign in with Google.
- * - Uses redirect on mobile (popup is often blocked).
- * - Uses popup on desktop with an automatic redirect fallback.
+ * Attempts popup authentication across all devices.
+ * If the browser or embedded webview explicitly blocks the popup, falls back to redirect.
+ * If the user deliberately closes the popup, cancels cleanly without redirecting.
  */
 export async function signInWithGoogle(): Promise<UserCredential | null> {
   const auth = requireAuth();
-
-  if (isMobileOrPopupRestricted()) {
-    // On mobile, redirect is more reliable. The result is handled on return
-    // by calling handleGoogleRedirectResult() after the page reloads.
-    await signInWithRedirect(auth, googleProvider);
-    return null; // page will reload
-  }
 
   try {
     return await signInWithPopup(auth, googleProvider);
   } catch (err) {
     const code = (err as { code?: string })?.code ?? "";
-    // Fall back to redirect if popup was blocked or disallowed
+
+    // If popup is explicitly blocked, fall back to redirect
+    if (code === "auth/popup-blocked") {
+      await signInWithRedirect(auth, googleProvider);
+      return null;
+    }
+
+    // If user cancelled the popup, do not redirect
     if (
-      code === "auth/popup-blocked" ||
       code === "auth/popup-closed-by-user" ||
       code === "auth/cancelled-popup-request"
     ) {
-      await signInWithRedirect(auth, googleProvider);
-      return null; // page will reload
+      throw err;
     }
+
     throw err;
   }
 }
 
 /**
- * Call this once on page load to pick up the result of a redirect sign-in.
- * Returns the UserCredential if a redirect just completed, otherwise null.
+ * Checks for any pending redirect auth result upon page load.
+ * Returns null if no redirect sign-in was in flight.
  */
 export async function handleGoogleRedirectResult(): Promise<UserCredential | null> {
   if (!isFirebaseConfigured || !firebaseAuth) return null;
   try {
-    const result = await getRedirectResult(firebaseAuth);
-    return result;
+    return await getRedirectResult(firebaseAuth);
   } catch (err) {
     throw err;
   }
@@ -106,21 +97,25 @@ export function getAuthErrorMessage(error: unknown): string {
 
   if (message === "FIREBASE_NOT_CONFIGURED") {
     if (missingFirebaseEnvVars.length > 0) {
-      return `Firebase isn't configured yet. Missing from .env.local: ${missingFirebaseEnvVars.join(
+      return `Firebase is not configured yet. Missing from environment: ${missingFirebaseEnvVars.join(
         ", "
-      )}. Add these values, then fully restart the dev server.`;
+      )}. Please add these variables to your Vercel project settings.`;
     }
-    return "Firebase isn't connected yet — add your keys to .env.local to enable sign-in.";
+    return "Firebase is not connected yet. Please add your credentials in Project Settings.";
   }
 
   switch (code) {
     // ── Account / credential errors ──────────────────────────────────────────
     case "auth/email-already-in-use":
       return "That email is already registered. Try logging in instead.";
+    case "auth/account-exists-with-different-credential":
+      return "An account already exists with this email address. Please log in with your email and password.";
+    case "auth/credential-already-in-use":
+      return "This credential is already linked to another account.";
     case "auth/invalid-credential":
     case "auth/wrong-password":
     case "auth/user-not-found":
-      return "That email or password doesn't match our records.";
+      return "That email or password does not match our records.";
     case "auth/weak-password":
       return "Please choose a stronger password (at least 6 characters).";
     case "auth/invalid-email":
@@ -128,47 +123,49 @@ export function getAuthErrorMessage(error: unknown): string {
     case "auth/user-disabled":
       return "This account has been disabled. Please contact support.";
     case "auth/too-many-requests":
-      return "Too many attempts. Please wait a few minutes and try again.";
+      return "Too many sign-in attempts. Please wait a few minutes and try again.";
 
     // ── Popup / redirect errors ───────────────────────────────────────────────
     case "auth/popup-closed-by-user":
     case "auth/cancelled-popup-request":
-      return "Sign-in was cancelled. Try again when you're ready.";
+      return "Sign-in was cancelled.";
     case "auth/popup-blocked":
-      return "Your browser blocked the sign-in popup. We'll try a redirect instead — please wait.";
+      return "Your browser blocked the Google sign-in popup. Please allow popups for this site, or try again.";
 
     // ── Domain / configuration errors ─────────────────────────────────────────
     case "auth/unauthorized-domain":
       return (
-        "This domain isn't authorised for Google sign-in. " +
-        "In Firebase Console → Authentication → Settings → Authorised Domains, " +
-        "add this site's domain, then try again."
+        "This domain is not authorized for Google sign-in. " +
+        "In Firebase Console → Authentication → Settings → Authorized Domains, " +
+        "add your Vercel domain (e.g. your-app.vercel.app), then try again."
       );
     case "auth/operation-not-allowed":
-      return "Google sign-in isn't enabled for this project. Enable it in Firebase Console → Authentication → Sign-in method.";
+      return "Google sign-in is not enabled for this Firebase project. Enable it in Firebase Console → Authentication → Sign-in method.";
 
     // ── API key / config errors ───────────────────────────────────────────────
     case "auth/invalid-api-key":
-      return "The Firebase API key looks invalid. Double-check NEXT_PUBLIC_FIREBASE_API_KEY in .env.local, then restart the dev server.";
+      return "The Firebase API key looks invalid. Double-check NEXT_PUBLIC_FIREBASE_API_KEY in Vercel settings.";
     case "auth/api-key-not-valid":
     case "auth/api-key-not-valid.-please-pass-a-valid-api-key.":
-      return "Firebase rejected the API key. Re-copy it from Firebase Console → Project Settings → General → Your apps, then restart the dev server.";
+      return "Firebase rejected the API key. Re-copy it from Firebase Console → Project Settings → General.";
 
-    // ── Network errors ────────────────────────────────────────────────────────
+    // ── Network / storage errors ──────────────────────────────────────────────
     case "auth/network-request-failed":
-      return "Network error. Check your connection and try again.";
+      return "Network error. Please check your internet connection and try again.";
+    case "auth/web-storage-unsupported":
+      return "Third-party cookies or storage access are disabled in your browser settings. Please enable them to sign in.";
     case "auth/internal-error":
-      return "An internal error occurred with Firebase. Please try again in a moment.";
+      return "A temporary Firebase service error occurred. Please try again in a moment.";
 
     // ── Password reset specific ───────────────────────────────────────────────
     case "auth/missing-email":
-      return "Please enter your email address.";
+      return "Please enter your registered email address.";
 
     default:
-      // Log the actual code in development so it can be caught and added above
-      if (process.env.NODE_ENV === "development" && code) {
-        console.warn("[Companion Auth] Unhandled Firebase error code:", code);
+      // Always include the real code if available so debugging is transparent
+      if (code) {
+        return `Sign-in failed (${code}). Please try again or check your settings.`;
       }
-      return "Something went wrong. Please try again.";
+      return message || "Something went wrong during sign-in. Please try again.";
   }
 }
