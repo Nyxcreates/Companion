@@ -414,18 +414,24 @@ export function NotificationSettingsSection() {
             Web &amp; Device Notifications
           </label>
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant={browserPermissionStatus === "granted" ? "ghost" : "secondary"}
-              onClick={() => requestBrowserPermission()}
-              className="text-xs"
-            >
-              {browserPermissionStatus === "granted"
-                ? "✓ Push Notifications Active"
-                : browserPermissionStatus === "denied"
-                ? "Blocked in Browser"
-                : "Enable Device Notifications"}
-            </Button>
+            {browserPermissionStatus === "unsupported" ? (
+              <p className="text-xs text-ink-muted italic">
+                Notifications are not supported in this browser or environment.
+              </p>
+            ) : (
+              <Button
+                size="sm"
+                variant={browserPermissionStatus === "granted" ? "ghost" : "secondary"}
+                onClick={() => requestBrowserPermission()}
+                className="text-xs"
+              >
+                {browserPermissionStatus === "granted"
+                  ? "✓ Push Notifications Active"
+                  : browserPermissionStatus === "denied"
+                  ? "Blocked in Browser"
+                  : "Enable Device Notifications"}
+              </Button>
+            )}
           </div>
         </div>
       </div>

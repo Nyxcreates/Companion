@@ -58,10 +58,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
   const lastEvaluatedAtRef = useRef<number>(0);
 
-  // Check browser notification permission support
+  // Check browser notification permission support — must run in useEffect (never at render time).
+  // Always access via window.Notification to avoid "Notification is not defined" on SSR/prerender.
   useEffect(() => {
     if (typeof window !== "undefined" && "Notification" in window) {
-      setBrowserPermissionStatus(Notification.permission);
+      setBrowserPermissionStatus(window.Notification.permission);
     } else {
       setBrowserPermissionStatus("unsupported");
     }
@@ -286,10 +287,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     }
 
     try {
-      const permission = await Notification.requestPermission();
+      // Always call via window.Notification to avoid bare-global access errors
+      const permission = await window.Notification.requestPermission();
       setBrowserPermissionStatus(permission);
 
-      if (permission === "granted" && "serviceWorker" in navigator) {
+      if (permission === "granted" && typeof navigator !== "undefined" && "serviceWorker" in navigator) {
         try {
           const reg = await navigator.serviceWorker.register("/sw.js");
           const sub = await reg.pushManager.getSubscription();
