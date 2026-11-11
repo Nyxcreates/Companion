@@ -4,17 +4,23 @@ import Link from "next/link";
 import { useProfile } from "@/context/ProfileContext";
 import { useWorldTheme } from "@/context/WorldThemeContext";
 import { WORLD_THEMES, normalizeLivingEnvironmentId } from "@/lib/world/worldThemes";
+import { getWorldPersonality } from "@/lib/worlds/personality";
 import { LivingCompanionGuide } from "@/components/character/LivingCompanionGuide";
 
 export function DashboardWorldPresence() {
   const { profile } = useProfile();
-  const { livingEnvironment } = useWorldTheme();
+  const { livingEnvironment, activeReaction } = useWorldTheme();
 
   const companionName = profile?.companionName ?? "Nikki";
   const userName = profile?.displayName ? `, ${profile.displayName}` : "";
 
   const canonicalEnv = normalizeLivingEnvironmentId(livingEnvironment);
   const themeMeta = WORLD_THEMES.find((w) => w.id === canonicalEnv) ?? WORLD_THEMES[0];
+  const personality = getWorldPersonality(canonicalEnv);
+
+  const activePose = activeReaction ? activeReaction.pose : personality.idleAnimation.pose;
+  const activeGaze = activeReaction ? activeReaction.gaze : personality.idleAnimation.gaze;
+  const dialogueLine = activeReaction ? activeReaction.line : personality.greetingLines[0];
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-900/40 p-5 shadow-lg backdrop-blur-xl sm:p-6">
@@ -22,9 +28,9 @@ export function DashboardWorldPresence() {
         {/* Living Guide Miniature */}
         <div className="flex-shrink-0">
           <LivingCompanionGuide
-            pose="idle"
-            gaze="center"
-            name={companionName}
+            pose={activePose}
+            gaze={activeGaze}
+            name={personality.companionLook.badgeLabel || companionName}
             className="scale-90"
           />
         </div>
@@ -41,8 +47,12 @@ export function DashboardWorldPresence() {
             </span>
           </div>
 
-          <p className="mt-1 text-sm text-ink-secondary">
-            {companionName} is here with you. Whether you want to plan your next steps, enter focus, or simply chat through what&apos;s on your mind—this space adapts to your pace.
+          <p className="mt-1 text-sm text-ink-secondary italic">
+            &ldquo;{dialogueLine}&rdquo;
+          </p>
+
+          <p className="mt-1.5 text-xs text-ink-muted">
+            {personality.toneNote}
           </p>
 
           {/* Quick World Portals */}

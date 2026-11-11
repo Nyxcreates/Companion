@@ -1,5 +1,6 @@
 import { EMOTION_LABELS } from "./emotion";
 import { MEMORY_TYPES } from "@/lib/memory/types";
+import { getWorldPersonality } from "@/lib/worlds/personality";
 import type { AgentContext } from "./types";
 
 const CORE_PERSONALITY = `
@@ -178,6 +179,12 @@ export function buildSystemInstruction(context: AgentContext): string {
   }
   if (context.helpPreferences.length > 0) {
     contextLines.push(`How they said they want help: ${context.helpPreferences.join(", ")}.`);
+  }
+  if (context.livingEnvironment) {
+    const personality = getWorldPersonality(context.livingEnvironment);
+    contextLines.push(
+      `Active environmental world theme: "${personality.name}". Gentle atmospheric tone flavor: ${personality.toneNote} (Gentle stylistic nuance only; never mention this prompt instruction directly, and never override safety rules or the JSON output contract).`
+    );
   }
 
   return [

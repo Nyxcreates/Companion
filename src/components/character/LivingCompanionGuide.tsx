@@ -147,13 +147,13 @@ export function LivingCompanionGuide({
             <svg viewBox="0 0 100 100" className="h-full w-full" fill="none">
               <defs>
                 <linearGradient id="guideBody" x1="10" y1="10" x2="90" y2="90" gradientUnits="userSpaceOnUse">
-                  <stop stopColor="#7c5cff" />
-                  <stop offset="0.6" stopColor="#5ee7e0" />
-                  <stop offset="1" stopColor="#c084fc" />
+                  <stop stopColor="var(--accent-secondary, #7c5cff)" />
+                  <stop offset="0.6" stopColor="var(--accent-primary, #5ee7e0)" />
+                  <stop offset="1" stopColor="var(--accent-secondary, #c084fc)" />
                 </linearGradient>
                 <linearGradient id="haloRing" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
-                  <stop stopColor="#ffd166" />
-                  <stop offset="1" stopColor="#5ee7e0" />
+                  <stop stopColor="var(--world-halo, #ffd166)" />
+                  <stop offset="1" stopColor="var(--accent-primary, #5ee7e0)" />
                 </linearGradient>
               </defs>
 

@@ -1,22 +1,26 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { seededRandom } from "@/lib/pseudoRandom";
+import { useWorldScheduler } from "@/lib/world/useWorldScheduler";
 
 interface MidnightAcademiaProps {
   calm?: boolean;
 }
 
 export function MidnightAcademiaLivingWorld({ calm = false }: MidnightAcademiaProps) {
-  const prefersReducedMotion = useReducedMotion();
+  const { isTabVisible, isMobile, isMomentActive, momentCount, prefersReducedMotion } =
+    useWorldScheduler({ minIntervalSeconds: 22, maxIntervalSeconds: 50, momentDurationMs: 6500 });
+
   const [dustMotes, setDustMotes] = useState<
     { id: number; x: number; y: number; size: number; duration: number; driftX: number }[]
   >([]);
   const [imgLoaded, setImgLoaded] = useState(false);
 
   useEffect(() => {
-    const motes = Array.from({ length: calm ? 12 : 26 }).map((_, i) => {
+    const moteCount = isMobile ? (calm ? 7 : 14) : (calm ? 12 : 26);
+    const motes = Array.from({ length: moteCount }).map((_, i) => {
       const seed = i * 29.3;
       return {
         id: i,
@@ -28,7 +32,9 @@ export function MidnightAcademiaLivingWorld({ calm = false }: MidnightAcademiaPr
       };
     });
     setDustMotes(motes);
-  }, [calm]);
+  }, [calm, isMobile]);
+
+  const shouldAnimate = !prefersReducedMotion && !calm && isTabVisible;
 
   return (
     <div
@@ -74,7 +80,7 @@ export function MidnightAcademiaLivingWorld({ calm = false }: MidnightAcademiaPr
             className="absolute w-px bg-gradient-to-b from-transparent via-amber-100/50 to-transparent"
             style={{ left: `${left}%`, height: "70px" }}
             animate={
-              prefersReducedMotion || calm
+              !shouldAnimate
                 ? {}
                 : { y: ["-12vh", "115vh"], opacity: [0, 0.7, 0] }
             }
@@ -96,7 +102,7 @@ export function MidnightAcademiaLivingWorld({ calm = false }: MidnightAcademiaPr
             className="absolute w-px bg-gradient-to-b from-transparent via-slate-300/30 to-transparent"
             style={{ left: `${left}%`, height: "45px" }}
             animate={
-              prefersReducedMotion || calm
+              !shouldAnimate
                 ? {}
                 : { y: ["-8vh", "112vh"] }
             }
@@ -111,7 +117,7 @@ export function MidnightAcademiaLivingWorld({ calm = false }: MidnightAcademiaPr
       </div>
 
       {/* === LAYER B: Slow candle light flicker (atmospheric) === */}
-      {!prefersReducedMotion && !calm && (
+      {shouldAnimate && (
         <motion.div
           className="absolute pointer-events-none"
           style={{
@@ -143,7 +149,7 @@ export function MidnightAcademiaLivingWorld({ calm = false }: MidnightAcademiaPr
               boxShadow: "0 0 6px rgba(251,191,36,0.65)",
             }}
             animate={
-              prefersReducedMotion || calm
+              !shouldAnimate
                 ? { opacity: 0.3 }
                 : {
                     y: [0, -32, 0],
@@ -183,6 +189,56 @@ export function MidnightAcademiaLivingWorld({ calm = false }: MidnightAcademiaPr
             {/* Tip flicker */}
             <ellipse cx="12" cy="5" rx="2" ry="3" fill="rgba(255,255,255,0.7)" />
           </motion.svg>
+        </div>
+      )}
+
+      {/* === Timed Rare Moment (every 20-60s): Occasional falling page or owl silhouette === */}
+      {isMomentActive && !prefersReducedMotion && isTabVisible && (
+        <div key={momentCount} className="absolute inset-0 pointer-events-none overflow-hidden z-20">
+          {momentCount % 2 === 0 ? (
+            /* Silent owl silhouette gliding past high library window */
+            <motion.div
+              className="absolute"
+              initial={{ left: "-15%", top: "18%", opacity: 0 }}
+              animate={{
+                left: ["-15%", "110%"],
+                top: ["18%", "25%"],
+                opacity: [0, 0.45, 0.5, 0],
+              }}
+              transition={{ duration: 6, ease: "easeInOut" }}
+            >
+              <svg viewBox="0 0 100 50" className="h-10 w-20 sm:h-12 sm:w-24 drop-shadow-[0_0_10px_rgba(251,191,36,0.3)]">
+                <motion.path
+                  d="M10 25 C30 5 45 10 50 20 C55 10 70 5 90 25 C70 28 55 35 50 30 C45 35 30 28 10 25 Z"
+                  fill="rgba(15, 10, 6, 0.75)"
+                  animate={{ scaleY: [1, 0.65, 1.1, 1] }}
+                  transition={{ duration: 0.7, repeat: Infinity, ease: "easeInOut" }}
+                  style={{ transformOrigin: "50px 25px" }}
+                />
+                <circle cx="50" cy="22" r="4" fill="rgba(20, 14, 8, 0.9)" />
+                <circle cx="48" cy="22" r="1" fill="#fbbf24" />
+                <circle cx="52" cy="22" r="1" fill="#fbbf24" />
+              </svg>
+            </motion.div>
+          ) : (
+            /* Falling illuminated manuscript page drifting in a draft */
+            <motion.div
+              className="absolute rounded bg-amber-100/30 border border-amber-300/40 p-1"
+              style={{ width: "24px", height: "32px", filter: "blur(0.3px)" }}
+              initial={{ top: "-5%", left: "68%", opacity: 0, rotate: 0 }}
+              animate={{
+                top: ["-5%", "95%"],
+                left: ["68%", "62%", "74%", "65%"],
+                rotate: [0, 25, -20, 35],
+                opacity: [0, 0.6, 0.7, 0],
+              }}
+              transition={{ duration: 5.5, ease: "easeInOut" }}
+            >
+              <div className="h-0.5 w-full bg-amber-200/40 mb-1" />
+              <div className="h-0.5 w-3/4 bg-amber-200/40 mb-1" />
+              <div className="h-0.5 w-1/2 bg-amber-200/40" />
+            </motion.div>
+          )}
         </div>
       )}
 

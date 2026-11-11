@@ -1,8 +1,9 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { seededRandom } from "@/lib/pseudoRandom";
+import { useWorldScheduler } from "@/lib/world/useWorldScheduler";
 
 interface OceanLivingWorldProps {
   interactive?: boolean;
@@ -20,13 +21,16 @@ export function OceanLivingWorld({
   onSelectObject,
   activeObjectId,
 }: OceanLivingWorldProps) {
-  const prefersReducedMotion = useReducedMotion();
+  const { isTabVisible, isMobile, isMomentActive, momentCount, prefersReducedMotion } =
+    useWorldScheduler({ minIntervalSeconds: 25, maxIntervalSeconds: 55, momentDurationMs: 8000 });
+
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const [fishSchool, setFishSchool] = useState<Fish[]>([]);
   const [imgLoaded, setImgLoaded] = useState(false);
 
   useEffect(() => {
-    const bbs: Bubble[] = Array.from({ length: calm ? 8 : 18 }).map((_, i) => {
+    const bubbleCount = isMobile ? (calm ? 5 : 9) : (calm ? 8 : 18);
+    const bbs: Bubble[] = Array.from({ length: bubbleCount }).map((_, i) => {
       const seed = i * 19.87;
       return {
         id: i,
@@ -38,8 +42,9 @@ export function OceanLivingWorld({
     });
     setBubbles(bbs);
 
+    const fishCount = isMobile ? (calm ? 2 : 4) : (calm ? 4 : 8);
     const colors = ["#5ee7e0", "#38bdf8", "#818cf8", "#c084fc"];
-    const fishes: Fish[] = Array.from({ length: calm ? 4 : 8 }).map((_, i) => {
+    const fishes: Fish[] = Array.from({ length: fishCount }).map((_, i) => {
       const seed = i * 53.21;
       return {
         id: i,
@@ -51,7 +56,9 @@ export function OceanLivingWorld({
       };
     });
     setFishSchool(fishes);
-  }, [calm]);
+  }, [calm, isMobile]);
+
+  const shouldAnimate = !prefersReducedMotion && !calm && isTabVisible;
 
   const handleObjectClick = (objectId: string, label: string, description: string) => {
     if (interactive && onSelectObject) onSelectObject(objectId, label, description);
@@ -102,7 +109,7 @@ export function OceanLivingWorld({
               "repeating-linear-gradient(62deg, rgba(94,231,224,0.18) 0px, transparent 38px, rgba(56,189,248,0.12) 76px, transparent 114px)",
           }}
           animate={
-            prefersReducedMotion || calm
+            !shouldAnimate
               ? {}
               : { opacity: [0.18, 0.42, 0.18], x: [0, 22, 0], scaleX: [1, 1.04, 1] }
           }
@@ -122,7 +129,7 @@ export function OceanLivingWorld({
             strokeWidth="3"
             strokeLinecap="round"
             animate={
-              prefersReducedMotion || calm
+              !shouldAnimate
                 ? {}
                 : { rotate: [idx % 2 === 0 ? -5 : 5, idx % 2 === 0 ? 6 : -6, idx % 2 === 0 ? -5 : 5] }
             }
@@ -144,7 +151,7 @@ export function OceanLivingWorld({
             className="absolute rounded-full border border-cyan-300/35 bg-cyan-200/8"
             style={{ left: `${b.x}%`, bottom: "-5%", width: `${b.size}px`, height: `${b.size}px` }}
             animate={
-              prefersReducedMotion || calm
+              !shouldAnimate
                 ? { y: -80, opacity: 0 }
                 : {
                     y: ["0vh", "-110vh"],
@@ -165,7 +172,7 @@ export function OceanLivingWorld({
             className="absolute flex items-center"
             style={{ top: `${fish.y}%`, left: "-10vw" }}
             animate={
-              prefersReducedMotion || calm
+              !shouldAnimate
                 ? {}
                 : { x: ["0vw", "120vw"], y: [0, fish.id % 2 === 0 ? -14 : 14, 0] }
             }
@@ -283,6 +290,85 @@ export function OceanLivingWorld({
           )}
         </div>
       </div>
+
+      {/* Bioluminescent deep water drift */}
+      {shouldAnimate && (
+        <motion.div
+          className="absolute inset-0 pointer-events-none"
+          animate={{
+            opacity: [0.12, 0.28, 0.12],
+            scale: [1, 1.03, 1],
+          }}
+          transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
+          style={{
+            background:
+              "radial-gradient(circle at 70% 60%, rgba(56,189,248,0.18) 0%, rgba(94,231,224,0.12) 35%, transparent 65%)",
+          }}
+        />
+      )}
+
+      {/* === Timed Rare Moment (every 20-60s): Passing silhouette of a whale or jellyfish === */}
+      {isMomentActive && !prefersReducedMotion && isTabVisible && (
+        <div key={momentCount} className="absolute inset-0 pointer-events-none overflow-hidden z-10">
+          {momentCount % 2 === 0 ? (
+            /* Whale silhouette with bioluminescent dorsal lights */
+            <motion.div
+              className="absolute"
+              initial={{ left: "-30%", top: "45%", opacity: 0 }}
+              animate={{
+                left: ["-30%", "110%"],
+                top: ["45%", "35%"],
+                opacity: [0, 0.45, 0.5, 0],
+              }}
+              transition={{ duration: 8, ease: "easeInOut" }}
+            >
+              <svg viewBox="0 0 240 70" className="h-16 w-56 sm:h-20 sm:w-72 drop-shadow-[0_0_15px_rgba(56,189,248,0.4)]">
+                <path
+                  d="M10 32 C30 18 80 12 160 22 C190 26 215 15 235 5 C230 20 220 32 235 48 C215 38 190 32 160 36 C100 44 40 46 10 32 Z"
+                  fill="rgba(4, 30, 48, 0.65)"
+                />
+                <path
+                  d="M90 34 C100 48 115 54 110 58 C100 56 85 45 80 34 Z"
+                  fill="rgba(3, 22, 36, 0.7)"
+                />
+                <path
+                  d="M40 31 C80 26 130 27 170 30"
+                  stroke="rgba(94, 231, 224, 0.55)"
+                  strokeWidth="1.5"
+                  strokeDasharray="4 6"
+                  fill="none"
+                />
+              </svg>
+            </motion.div>
+          ) : (
+            /* Giant ethereal bioluminescent jellyfish silhouette */
+            <motion.div
+              className="absolute"
+              initial={{ left: "20%", top: "105%", opacity: 0 }}
+              animate={{
+                left: ["20%", "30%", "45%"],
+                top: ["105%", "40%", "-20%"],
+                opacity: [0, 0.6, 0.7, 0],
+              }}
+              transition={{ duration: 9, ease: "easeInOut" }}
+            >
+              <svg viewBox="0 0 100 140" className="h-32 w-24 sm:h-44 sm:w-32 drop-shadow-[0_0_20px_rgba(94,231,224,0.6)]">
+                {/* Bell */}
+                <ellipse cx="50" cy="35" rx="36" ry="24" fill="rgba(6, 40, 60, 0.65)" stroke="rgba(94, 231, 224, 0.6)" strokeWidth="1.2" />
+                {/* Inner bell glow */}
+                <ellipse cx="50" cy="32" rx="24" ry="15" fill="rgba(56, 189, 248, 0.25)" />
+                <circle cx="50" cy="30" r="5" fill="#5ee7e0" style={{ filter: "drop-shadow(0 0 8px #5ee7e0)" }} />
+                {/* Trailing bioluminescent tentacles */}
+                <path d="M25 55 Q20 90 28 135" stroke="rgba(94, 231, 224, 0.5)" strokeWidth="1.5" fill="none" strokeDasharray="3 4" />
+                <path d="M38 58 Q34 95 42 140" stroke="rgba(56, 189, 248, 0.6)" strokeWidth="1.8" fill="none" />
+                <path d="M50 60 Q52 100 48 140" stroke="rgba(168, 85, 247, 0.6)" strokeWidth="2" fill="none" />
+                <path d="M62 58 Q66 95 58 140" stroke="rgba(56, 189, 248, 0.6)" strokeWidth="1.8" fill="none" />
+                <path d="M75 55 Q80 90 72 135" stroke="rgba(94, 231, 224, 0.5)" strokeWidth="1.5" fill="none" strokeDasharray="3 4" />
+              </svg>
+            </motion.div>
+          )}
+        </div>
+      )}
 
       {/* === LAYER D: Bottom depth gradient === */}
       <div

@@ -1,21 +1,26 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { seededRandom } from "@/lib/pseudoRandom";
+import { useWorldScheduler } from "@/lib/world/useWorldScheduler";
 
 interface AuroraSanctuaryProps {
   calm?: boolean;
 }
 
 export function AuroraSanctuaryLivingWorld({ calm = false }: AuroraSanctuaryProps) {
-  const prefersReducedMotion = useReducedMotion();
+  const { isTabVisible, isMobile, isMomentActive, momentCount, prefersReducedMotion } =
+    useWorldScheduler({ minIntervalSeconds: 24, maxIntervalSeconds: 54, momentDurationMs: 6500 });
+
   const [snowflakes, setSnowflakes] = useState<
     { id: number; x: number; duration: number; delay: number; size: number; drift: number }[]
   >([]);
+  const [imgLoaded, setImgLoaded] = useState(false);
 
   useEffect(() => {
-    const flakes = Array.from({ length: calm ? 14 : 28 }).map((_, i) => {
+    const flakeCount = isMobile ? (calm ? 8 : 16) : (calm ? 14 : 28);
+    const flakes = Array.from({ length: flakeCount }).map((_, i) => {
       const seed = i * 51.7;
       return {
         id: i,
@@ -27,7 +32,9 @@ export function AuroraSanctuaryLivingWorld({ calm = false }: AuroraSanctuaryProp
       };
     });
     setSnowflakes(flakes);
-  }, [calm]);
+  }, [calm, isMobile]);
+
+  const shouldAnimate = !prefersReducedMotion && !calm && isTabVisible;
 
   return (
     <div
@@ -44,6 +51,19 @@ export function AuroraSanctuaryLivingWorld({ calm = false }: AuroraSanctuaryProp
         }}
       />
 
+      {/* Optional real artwork backplate if dropped in public/worlds/aurora-sanctuary.jpg */}
+      <img
+        src="/worlds/aurora-sanctuary.jpg"
+        alt=""
+        aria-hidden="true"
+        onLoad={() => setImgLoaded(true)}
+        onError={() => setImgLoaded(false)}
+        className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-1500 pointer-events-none ${
+          imgLoaded ? "opacity-50" : "opacity-0"
+        }`}
+        style={{ objectPosition: "center 30%" }}
+      />
+
       {/* Starfield for arctic sky */}
       {Array.from({ length: 40 }).map((_, i) => {
         const seed = i * 77.3;
@@ -56,11 +76,19 @@ export function AuroraSanctuaryLivingWorld({ calm = false }: AuroraSanctuaryProp
             key={i}
             className="absolute rounded-full bg-white pointer-events-none"
             style={{ left: `${x}%`, top: `${y}%`, width: `${size}px`, height: `${size}px`, opacity: op }}
-            animate={prefersReducedMotion || calm ? {} : { opacity: [op * 0.4, op, op * 0.4] }}
+            animate={!shouldAnimate ? {} : { opacity: [op * 0.4, op, op * 0.4] }}
             transition={{ duration: 3 + seededRandom(seed + 4) * 4, delay: seededRandom(seed + 5) * 4, repeat: Infinity, ease: "easeInOut" }}
           />
         );
       })}
+
+      {/* Polar star (North Star) */}
+      <div className="absolute top-[12%] left-[48%] pointer-events-none">
+        <div className="relative">
+          <div className="h-2 w-2 rounded-full bg-white shadow-[0_0_12px_#5ee7e0]" />
+          <div className="absolute -inset-2 rounded-full bg-cyan-300/30 blur-sm animate-pulse" />
+        </div>
+      </div>
 
       {/* === LAYER B: Dancing aurora borealis curtains (3 layered ribbons) === */}
       {/* Ribbon 1 — emerald-cyan */}
@@ -68,7 +96,7 @@ export function AuroraSanctuaryLivingWorld({ calm = false }: AuroraSanctuaryProp
         className="absolute inset-x-0 top-0 pointer-events-none"
         style={{ height: "55%", opacity: calm ? 0.2 : 0.45 }}
         animate={
-          prefersReducedMotion || calm
+          !shouldAnimate
             ? {}
             : { x: ["-6%", "6%", "2%", "-6%"], scaleY: [1, 1.18, 0.94, 1] }
         }
@@ -89,7 +117,7 @@ export function AuroraSanctuaryLivingWorld({ calm = false }: AuroraSanctuaryProp
         className="absolute inset-x-0 top-0 pointer-events-none"
         style={{ height: "48%", opacity: calm ? 0.15 : 0.38 }}
         animate={
-          prefersReducedMotion || calm
+          !shouldAnimate
             ? {}
             : { x: ["5%", "-5%", "-2%", "5%"], scaleY: [0.9, 1.12, 1, 0.9] }
         }
@@ -105,12 +133,12 @@ export function AuroraSanctuaryLivingWorld({ calm = false }: AuroraSanctuaryProp
         />
       </motion.div>
 
-      {/* Ribbon 3 — teal accent */}
+      {/* Ribbon 3 — glacial teal accent */}
       <motion.div
         className="absolute inset-x-0 top-0 pointer-events-none"
         style={{ height: "38%", opacity: calm ? 0.12 : 0.3 }}
         animate={
-          prefersReducedMotion || calm
+          !shouldAnimate
             ? {}
             : { x: ["-3%", "8%", "0%", "-3%"], scaleY: [1.05, 0.9, 1.1, 1.05] }
         }
@@ -126,27 +154,86 @@ export function AuroraSanctuaryLivingWorld({ calm = false }: AuroraSanctuaryProp
         />
       </motion.div>
 
-      {/* === LAYER C: Mountain ridge silhouettes (depth) === */}
+      {/* === LAYER C: Mountain ridge silhouettes (3 depth tiers) === */}
       <svg
-        viewBox="0 0 1200 400"
+        viewBox="0 0 1200 420"
         preserveAspectRatio="none"
-        className="absolute bottom-0 left-0 right-0 h-52 w-full sm:h-64 opacity-65 pointer-events-none"
+        className="absolute bottom-0 left-0 right-0 h-56 w-full sm:h-72 opacity-75 pointer-events-none"
       >
-        {/* Far distant ridge */}
+        {/* Tier 1: Far distant alpine ridge with cold atmospheric mist */}
         <path
-          d="M0,300 C80,280 180,240 280,260 C380,280 440,230 540,245 C640,260 720,220 820,240 C920,260 1020,230 1100,245 C1150,252 1180,248 1200,250 L1200,400 L0,400 Z"
-          fill="rgba(4,22,32,0.7)"
+          d="M0,280 C100,240 180,210 260,230 C340,250 420,190 520,215 C620,240 700,180 800,205 C900,230 1000,195 1100,215 C1150,225 1180,220 1200,225 L1200,420 L0,420 Z"
+          fill="rgba(5,28,40,0.55)"
         />
-        {/* Near foreground ridge */}
+        {/* Far snow highlights */}
+        <polygon points="520,215 500,235 540,235" fill="rgba(200,240,255,0.2)" />
+        <polygon points="800,205 780,225 820,225" fill="rgba(200,240,255,0.2)" />
+
+        {/* Tier 2: Mid-ground jagged mountain range */}
         <path
-          d="M0,340 C120,310 220,280 340,300 C440,318 520,275 640,285 C760,295 860,270 980,285 C1080,298 1150,278 1200,282 L1200,400 L0,400 Z"
-          fill="rgba(3,14,20,0.9)"
+          d="M0,320 C80,290 180,250 280,270 C380,290 440,240 540,255 C640,270 720,230 820,250 C920,270 1020,240 1100,255 C1150,262 1180,258 1200,260 L1200,420 L0,420 Z"
+          fill="rgba(3,18,26,0.8)"
         />
-        {/* Snow caps highlights */}
-        <path d="M180,260 C195,248 210,252 225,260 Z" fill="rgba(255,255,255,0.25)" />
-        <path d="M450,235 C468,222 484,228 500,237 Z" fill="rgba(255,255,255,0.22)" />
-        <path d="M750,222 C768,210 783,216 798,222 Z" fill="rgba(255,255,255,0.2)" />
+        {/* Mid snow caps */}
+        <path d="M180,270 C195,258 210,262 225,270 Z" fill="rgba(255,255,255,0.3)" />
+        <path d="M450,245 C468,232 484,238 500,247 Z" fill="rgba(255,255,255,0.28)" />
+        <path d="M750,232 C768,220 783,226 798,232 Z" fill="rgba(255,255,255,0.25)" />
+
+        {/* Tier 3: Near foreground icy crag ridge */}
+        <path
+          d="M0,360 C120,330 220,300 340,320 C440,338 520,295 640,305 C760,315 860,290 980,305 C1080,318 1150,298 1200,302 L1200,420 L0,420 Z"
+          fill="rgba(2,11,16,0.95)"
+        />
+        {/* Ice glints and crystalline sparkles */}
+        <circle cx="205" cy="262" r="1.8" fill="#ffffff" opacity="0.9" />
+        <circle cx="475" cy="238" r="2.0" fill="#5ee7e0" opacity="0.95" />
+        <circle cx="775" cy="226" r="1.8" fill="#a855f7" opacity="0.9" />
+        <circle cx="980" cy="305" r="1.5" fill="#5ee7e0" opacity="0.85" />
       </svg>
+
+      {/* Dynamic ice sparkles on mountain slopes */}
+      {shouldAnimate && (
+        <div className="absolute bottom-16 inset-x-0 h-32 pointer-events-none" aria-hidden="true">
+          {[18, 32, 48, 62, 75, 88].map((pos, idx) => (
+            <motion.div
+              key={idx}
+              className="absolute w-1.5 h-1.5 rounded-full bg-cyan-100 shadow-[0_0_8px_#5ee7e0]"
+              style={{ left: `${pos}%`, bottom: `${15 + (idx % 3) * 18}%` }}
+              animate={{ opacity: [0, 0.95, 0], scale: [0.4, 1.5, 0.4] }}
+              transition={{ duration: 2.2, repeat: Infinity, delay: idx * 0.5, ease: "easeInOut" }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* === Timed Rare Moment (every 20-60s): Intense auroral flare surge across peaks === */}
+      {isMomentActive && !prefersReducedMotion && isTabVisible && (
+        <div key={momentCount} className="absolute inset-0 pointer-events-none z-20">
+          <motion.div
+            className="absolute inset-0"
+            style={{
+              background:
+                "radial-gradient(ellipse at 50% 30%, rgba(94,231,224,0.45) 0%, rgba(168,85,247,0.35) 45%, transparent 75%)",
+              filter: "blur(30px)",
+            }}
+            initial={{ opacity: 0, scaleY: 0.8 }}
+            animate={{ opacity: [0, 0.85, 0.4, 0.7, 0], scaleY: [0.8, 1.25, 1.1, 1.3, 0.9] }}
+            transition={{ duration: 6, ease: "easeInOut" }}
+          />
+          {/* Intense burst of ice sparkle glints */}
+          <div className="absolute bottom-20 inset-x-0 flex justify-around">
+            {[1, 2, 3, 4, 5, 6].map((k) => (
+              <motion.div
+                key={k}
+                className="w-2 h-2 rounded-full bg-white shadow-[0_0_12px_#5ee7e0]"
+                initial={{ scale: 0, opacity: 0 }}
+                animate={{ scale: [0, 1.8, 0], opacity: [0, 1, 0] }}
+                transition={{ duration: 1.5, delay: k * 0.25, ease: "easeOut" }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Frost-covered pine silhouettes */}
       <svg
@@ -179,7 +266,7 @@ export function AuroraSanctuaryLivingWorld({ calm = false }: AuroraSanctuaryProp
               boxShadow: "0 0 4px rgba(200,240,255,0.8)",
             }}
             animate={
-              prefersReducedMotion || calm
+              !shouldAnimate
                 ? { y: "110vh", opacity: 0.3 }
                 : {
                     y: ["0vh", "110vh"],

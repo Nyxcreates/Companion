@@ -121,9 +121,11 @@ export default function SettingsPage() {
         </div>
 
         {/* 1. Profile & Companion */}
-        <SettingsErrorBoundary fallbackTitle="Profile & Companion Settings">
-          <ProfileSettingsSection />
-        </SettingsErrorBoundary>
+        <div id="profile">
+          <SettingsErrorBoundary fallbackTitle="Profile & Companion Settings">
+            <ProfileSettingsSection />
+          </SettingsErrorBoundary>
+        </div>
 
         {/* 2. Appearance & Worlds */}
         <div id="appearance">
@@ -133,9 +135,11 @@ export default function SettingsPage() {
         </div>
 
         {/* 3. Nikki's Presence & Notifications */}
-        <SettingsErrorBoundary fallbackTitle="Nikki's Presence & Notifications">
-          <NotificationSettingsSection />
-        </SettingsErrorBoundary>
+        <div id="notifications">
+          <SettingsErrorBoundary fallbackTitle="Nikki's Presence & Notifications">
+            <NotificationSettingsSection />
+          </SettingsErrorBoundary>
+        </div>
 
         {/* 4. Data & Privacy */}
         <div id="privacy">
@@ -145,9 +149,11 @@ export default function SettingsPage() {
         </div>
 
         {/* 5. Account & Security */}
-        <SettingsErrorBoundary fallbackTitle="Account & Security">
-          <AccountSecuritySection />
-        </SettingsErrorBoundary>
+        <div id="account">
+          <SettingsErrorBoundary fallbackTitle="Account & Security">
+            <AccountSecuritySection />
+          </SettingsErrorBoundary>
+        </div>
       </div>
     </AppShell>
   );

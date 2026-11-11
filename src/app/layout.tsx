@@ -4,6 +4,7 @@ import { AuthProvider } from "@/context/AuthContext";
 import { ToastProvider } from "@/context/ToastContext";
 import { ProfileProvider } from "@/context/ProfileContext";
 import { WorldThemeContextProvider } from "@/context/WorldThemeContext";
+import { SoundtrackProvider } from "@/context/SoundtrackContext";
 import { NotificationProvider } from "@/context/NotificationContext";
 import { UsageProvider } from "@/context/UsageContext";
 import { MotionProvider } from "@/components/providers/MotionProvider";
@@ -42,14 +43,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <ToastProvider>
             <ProfileProvider>
               <WorldThemeContextProvider>
-                <NotificationProvider>
-                  <UsageProvider>
-                    <MotionProvider>
-                      {children}
-                      <StartupSequence />
-                    </MotionProvider>
-                  </UsageProvider>
-                </NotificationProvider>
+                <SoundtrackProvider>
+                  <NotificationProvider>
+                    <UsageProvider>
+                      <MotionProvider>
+                        {children}
+                        <StartupSequence />
+                      </MotionProvider>
+                    </UsageProvider>
+                  </NotificationProvider>
+                </SoundtrackProvider>
               </WorldThemeContextProvider>
             </ProfileProvider>
           </ToastProvider>

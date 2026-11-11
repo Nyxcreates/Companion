@@ -1,9 +1,9 @@
 /** Client-facing shape for a long-term memory — mirrors src/types/capsule.ts's pattern. */
 
 import type { MemoryType } from "@/lib/memory/types";
-import type { MemorySource } from "@/models/Memory";
 
-export type { MemoryType, MemorySource };
+export type MemorySource = "explicit_request" | "inferred";
+export type { MemoryType };
 
 export interface MemorySummary {
   id: string;

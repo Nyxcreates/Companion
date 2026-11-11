@@ -88,4 +88,6 @@ export interface AgentContext {
   relevantMemories: AgentMemoryItem[];
   /** Authoritative runtime clock and timezone. */
   currentTimeInfo: CurrentTimeInfo;
+  /** Active living world environment theme if selected. */
+  livingEnvironment?: string | null;
 }

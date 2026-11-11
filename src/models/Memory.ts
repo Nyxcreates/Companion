@@ -1,7 +1,8 @@
 import mongoose, { Schema, type Document, type Model } from "mongoose";
 import { MEMORY_TYPES, type MemoryType } from "@/lib/memory/types";
+import type { MemorySource } from "@/types/memory";
 
-export type MemorySource = "explicit_request" | "inferred";
+export type { MemorySource };
 export type MemoryStatus = "active" | "deleted";
 
 /**

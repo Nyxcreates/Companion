@@ -14,10 +14,12 @@ interface NotificationContextValue {
   notifications: NotificationItem[];
   unreadCount: number;
   preferences: NotificationPreferences | null;
+  preferencesError: string | null;
   activeCheckIn: CheckInTrigger | null;
   isLoading: boolean;
   browserPermissionStatus: NotificationPermission | "unsupported";
   fetchNotifications: () => Promise<void>;
+  refetchPreferences: () => Promise<void>;
   evaluateCheckIns: () => Promise<void>;
   markAsRead: (id: string) => Promise<void>;
   markAllAsRead: () => Promise<void>;
@@ -50,6 +52,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [preferences, setPreferences] = useState<NotificationPreferences | null>(null);
+  const [preferencesError, setPreferencesError] = useState<string | null>(null);
   const [activeCheckIn, setActiveCheckIn] = useState<CheckInTrigger | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [browserPermissionStatus, setBrowserPermissionStatus] = useState<
@@ -70,14 +73,17 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
   const fetchPreferences = useCallback(async () => {
     if (!firebaseUser) return;
+    setPreferencesError(null);
     try {
       const res = await authFetch("/api/notifications/preferences");
       const envelope = await parseApiResponse<NotificationPreferences>(res);
       if (res.ok && envelope.data) {
         setPreferences(envelope.data);
+      } else {
+        setPreferencesError(envelope.error?.message ?? "Could not load notification preferences.");
       }
-    } catch {
-      // Best-effort
+    } catch (err) {
+      setPreferencesError(err instanceof Error ? err.message : "Failed to load notification settings.");
     }
   }, [firebaseUser]);
 
@@ -317,10 +323,12 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         notifications,
         unreadCount,
         preferences,
+        preferencesError,
         activeCheckIn,
         isLoading,
         browserPermissionStatus,
         fetchNotifications,
+        refetchPreferences: fetchPreferences,
         evaluateCheckIns,
         markAsRead,
         markAllAsRead,

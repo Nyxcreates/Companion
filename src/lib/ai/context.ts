@@ -45,6 +45,7 @@ export async function buildAgentContext(
       activeTasks: [...inProgressTasks, ...pendingTasks],
       relevantMemories,
       currentTimeInfo,
+      livingEnvironment: doc?.livingEnvironment ?? null,
     };
   } catch (error) {
     throw new AgentContextError(error);

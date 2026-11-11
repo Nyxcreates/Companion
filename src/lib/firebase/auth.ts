@@ -37,22 +37,41 @@ export async function signInWithEmail(
   return signInWithEmailAndPassword(requireAuth(), email, password);
 }
 
+function isMobileOrStandalone(): boolean {
+  if (typeof window === "undefined") return false;
+  const isStandalone =
+    window.matchMedia?.("(display-mode: standalone)")?.matches ||
+    (window.navigator as unknown as { standalone?: boolean })?.standalone === true;
+  const isMobile =
+    typeof navigator !== "undefined" &&
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  return Boolean(isStandalone || isMobile);
+}
+
 /**
  * Sign in with Google.
- * Attempts popup authentication across all devices.
- * If the browser or embedded webview explicitly blocks the popup, falls back to redirect.
- * If the user deliberately closes the popup, cancels cleanly without redirecting.
+ * On mobile devices (e.g. Android phone) and PWA standalone mode, uses redirect
+ * to avoid popup blockers and broken window.opener communication.
+ * On desktop browsers, uses popup with graceful redirect fallback.
  */
 export async function signInWithGoogle(): Promise<UserCredential | null> {
   const auth = requireAuth();
+
+  if (isMobileOrStandalone()) {
+    await signInWithRedirect(auth, googleProvider);
+    return null;
+  }
 
   try {
     return await signInWithPopup(auth, googleProvider);
   } catch (err) {
     const code = (err as { code?: string })?.code ?? "";
 
-    // If popup is explicitly blocked, fall back to redirect
-    if (code === "auth/popup-blocked") {
+    // If popup is explicitly blocked or unsupported, fall back to redirect
+    if (
+      code === "auth/popup-blocked" ||
+      code === "auth/operation-not-supported-in-this-environment"
+    ) {
       await signInWithRedirect(auth, googleProvider);
       return null;
     }

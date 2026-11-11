@@ -1,8 +1,9 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { seededRandom } from "@/lib/pseudoRandom";
+import { useWorldScheduler } from "@/lib/world/useWorldScheduler";
 
 interface MoonlitSakuraProps {
   calm?: boolean;
@@ -19,12 +20,14 @@ interface Petal {
 }
 
 export function MoonlitSakuraLivingWorld({ calm = false }: MoonlitSakuraProps) {
-  const prefersReducedMotion = useReducedMotion();
+  const { isTabVisible, isMobile, prefersReducedMotion } =
+    useWorldScheduler({ minIntervalSeconds: 22, maxIntervalSeconds: 52 });
   const [petals, setPetals] = useState<Petal[]>([]);
   const [imgLoaded, setImgLoaded] = useState(false);
 
   useEffect(() => {
-    const list: Petal[] = Array.from({ length: calm ? 14 : 30 }).map((_, i) => {
+    const count = isMobile ? (calm ? 8 : 16) : (calm ? 14 : 30);
+    const list: Petal[] = Array.from({ length: count }).map((_, i) => {
       const seed = i * 47.19;
       return {
         id: i,
@@ -37,7 +40,9 @@ export function MoonlitSakuraLivingWorld({ calm = false }: MoonlitSakuraProps) {
       };
     });
     setPetals(list);
-  }, [calm]);
+  }, [calm, isMobile]);
+
+  const shouldAnimate = !prefersReducedMotion && !calm && isTabVisible;
 
   return (
     <div
@@ -82,12 +87,12 @@ export function MoonlitSakuraLivingWorld({ calm = false }: MoonlitSakuraProps) {
           background: "radial-gradient(circle, rgba(255,240,250,0.18) 0%, rgba(244,114,182,0.1) 40%, transparent 70%)",
           filter: "blur(28px)",
         }}
-        animate={prefersReducedMotion || calm ? {} : { opacity: [0.6, 1, 0.6], scale: [1, 1.08, 1] }}
+        animate={!shouldAnimate ? {} : { opacity: [0.6, 1, 0.6], scale: [1, 1.08, 1] }}
         transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
       />
 
       {/* === LAYER B: Slow atmospheric mist layer === */}
-      {!prefersReducedMotion && !calm && (
+      {shouldAnimate && (
         <motion.div
           className="absolute inset-x-0 bottom-0 h-48 pointer-events-none opacity-18"
           animate={{ x: ["-6%", "6%", "-6%"] }}
@@ -105,7 +110,7 @@ export function MoonlitSakuraLivingWorld({ calm = false }: MoonlitSakuraProps) {
             className="absolute"
             style={{ left: `${petal.x}%`, top: "-4%" }}
             animate={
-              prefersReducedMotion || calm
+              !shouldAnimate
                 ? { y: "115vh", opacity: 0 }
                 : {
                     y: ["0vh", "115vh"],

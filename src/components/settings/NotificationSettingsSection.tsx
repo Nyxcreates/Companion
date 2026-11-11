@@ -94,6 +94,8 @@ const CATEGORY_META: Record<
 export function NotificationSettingsSection() {
   const {
     preferences,
+    preferencesError,
+    refetchPreferences,
     updatePreferences,
     resetLearned,
     requestBrowserPermission,
@@ -118,6 +120,21 @@ export function NotificationSettingsSection() {
   }, []);
 
   if (!preferences) {
+    if (preferencesError) {
+      return (
+        <Card id="notifications" className="p-6 text-center">
+          <p className="text-sm text-danger mb-3">{preferencesError}</p>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => refetchPreferences()}
+            className="text-xs mx-auto"
+          >
+            Retry loading notifications
+          </Button>
+        </Card>
+      );
+    }
     return (
       <Card id="notifications" className="p-6">
         <p className="text-sm text-ink-muted">Loading notification settings...</p>
@@ -428,8 +445,8 @@ export function NotificationSettingsSection() {
                 {browserPermissionStatus === "granted"
                   ? "✓ Push Notifications Active"
                   : browserPermissionStatus === "denied"
-                  ? "Blocked in Browser"
-                  : "Enable Device Notifications"}
+                    ? "Blocked in Browser"
+                    : "Enable Device Notifications"}
               </Button>
             )}
           </div>
@@ -454,11 +471,10 @@ export function NotificationSettingsSection() {
               <div
                 key={cat}
                 onClick={() => handleToggleCategory(cat)}
-                className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-colors ${
-                  isEnabled
+                className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-colors ${isEnabled
                     ? "border-white/15 bg-white/[0.04] hover:bg-white/[0.08]"
                     : "border-white/5 bg-transparent opacity-60 hover:opacity-80"
-                }`}
+                  }`}
               >
                 <div className="mt-0.5 shrink-0 rounded-lg bg-white/10 p-1.5">
                   {meta.icon}
@@ -467,9 +483,8 @@ export function NotificationSettingsSection() {
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-semibold text-white">{meta.label}</p>
                     <span
-                      className={`h-2 w-2 rounded-full ${
-                        isEnabled ? "bg-emerald-400" : "bg-slate-600"
-                      }`}
+                      className={`h-2 w-2 rounded-full ${isEnabled ? "bg-emerald-400" : "bg-slate-600"
+                        }`}
                     />
                   </div>
                   <p className="text-[11px] text-ink-muted mt-0.5 leading-snug">

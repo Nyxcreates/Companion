@@ -1,8 +1,9 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { seededRandom } from "@/lib/pseudoRandom";
+import { useWorldScheduler } from "@/lib/world/useWorldScheduler";
 
 interface GardenLivingWorldProps {
   interactive?: boolean;
@@ -37,7 +38,9 @@ export function GardenLivingWorld({
   onSelectObject,
   activeObjectId,
 }: GardenLivingWorldProps) {
-  const prefersReducedMotion = useReducedMotion();
+  const { isTabVisible, isMobile, isMomentActive, momentCount, prefersReducedMotion } =
+    useWorldScheduler({ minIntervalSeconds: 24, maxIntervalSeconds: 52, momentDurationMs: 6500 });
+
   const [fireflies, setFireflies] = useState<Firefly[]>([]);
   const [petals, setPetals] = useState<Petal[]>([]);
   const [isBlooming, setIsBlooming] = useState(seedGrown);
@@ -46,7 +49,8 @@ export function GardenLivingWorld({
   useEffect(() => setIsBlooming(seedGrown), [seedGrown]);
 
   useEffect(() => {
-    const ffs: Firefly[] = Array.from({ length: calm ? 10 : 22 }).map((_, i) => {
+    const ffCount = isMobile ? (calm ? 6 : 12) : (calm ? 10 : 22);
+    const ffs: Firefly[] = Array.from({ length: ffCount }).map((_, i) => {
       const seed = i * 43.19;
       return {
         id: i,
@@ -59,7 +63,8 @@ export function GardenLivingWorld({
     });
     setFireflies(ffs);
 
-    const pts: Petal[] = Array.from({ length: calm ? 8 : 18 }).map((_, i) => {
+    const petalCount = isMobile ? (calm ? 5 : 9) : (calm ? 8 : 18);
+    const pts: Petal[] = Array.from({ length: petalCount }).map((_, i) => {
       const seed = i * 67.4;
       return {
         id: i,
@@ -71,7 +76,9 @@ export function GardenLivingWorld({
       };
     });
     setPetals(pts);
-  }, [calm]);
+  }, [calm, isMobile]);
+
+  const shouldAnimate = !prefersReducedMotion && !calm && isTabVisible;
 
   const handleObjectClick = (objectId: string, label: string, description: string) => {
     if (interactive && onSelectObject) {
@@ -135,7 +142,7 @@ export function GardenLivingWorld({
             className="absolute"
             style={{ left: `${petal.x}%`, top: "-3%" }}
             animate={
-              prefersReducedMotion || calm
+              !shouldAnimate
                 ? { y: "110vh", opacity: 0 }
                 : {
                     y: ["0vh", "115vh"],
@@ -217,8 +224,8 @@ export function GardenLivingWorld({
               boxShadow: "0 0 8px #34d399, 0 0 18px rgba(52,211,153,0.5)",
             }}
             animate={
-              prefersReducedMotion || calm
-                ? { opacity: 0.45 }
+              !shouldAnimate
+                ? { opacity: 0.45, x: 0, y: 0 }
                 : {
                     x: [0, ff.id % 2 === 0 ? 18 : -18, 0],
                     y: [0, -20, 0],
@@ -335,6 +342,61 @@ export function GardenLivingWorld({
           )}
         </div>
       </div>
+
+      {/* Swaying canopy leaves in the gentle breeze */}
+      {shouldAnimate && (
+        <div className="absolute top-0 right-0 w-64 h-36 pointer-events-none opacity-40 overflow-hidden">
+          <motion.svg
+            viewBox="0 0 200 120"
+            className="w-full h-full"
+            animate={{ rotate: [-2, 3, -2], x: [0, 4, 0] }}
+            transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
+            style={{ transformOrigin: "top right" }}
+          >
+            <path d="M120 0 Q150 50 190 70 Q140 60 110 30 Z" fill="#059669" opacity="0.8" />
+            <path d="M150 0 Q170 40 200 45 Q160 35 140 20 Z" fill="#10b981" opacity="0.7" />
+            <path d="M80 0 Q110 40 140 60 Q105 45 75 20 Z" fill="#34d399" opacity="0.6" />
+          </motion.svg>
+        </div>
+      )}
+
+      {/* === Timed Rare Moment (every 20-60s): Iridescent butterfly fluttering across meadow === */}
+      {isMomentActive && !prefersReducedMotion && isTabVisible && (
+        <div key={momentCount} className="absolute inset-0 pointer-events-none z-20">
+          <motion.div
+            className="absolute"
+            initial={{ left: "-5%", top: "62%", opacity: 0 }}
+            animate={{
+              left: ["-5%", "35%", "70%", "105%"],
+              top: ["62%", "40%", "50%", "32%"],
+              opacity: [0, 1, 1, 0],
+            }}
+            transition={{ duration: 6, ease: "easeInOut" }}
+          >
+            <motion.div
+              animate={{ y: [0, -8, 4, -6, 0] }}
+              transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+            >
+              <svg viewBox="0 0 40 30" className="h-7 w-9 drop-shadow-[0_0_8px_rgba(52,211,153,0.8)]">
+                <motion.g
+                  animate={{ scaleX: [1, 0.2, 1] }}
+                  transition={{ duration: 0.22, repeat: Infinity, ease: "easeInOut" }}
+                  style={{ transformOrigin: "20px 15px" }}
+                >
+                  {/* Left wings */}
+                  <ellipse cx="14" cy="11" rx="9" ry="6" fill="#38bdf8" />
+                  <ellipse cx="12" cy="18" rx="7" ry="5" fill="#34d399" />
+                  {/* Right wings */}
+                  <ellipse cx="26" cy="11" rx="9" ry="6" fill="#38bdf8" />
+                  <ellipse cx="28" cy="18" rx="7" ry="5" fill="#34d399" />
+                  {/* Body & glow core */}
+                  <ellipse cx="20" cy="15" rx="1.8" ry="6" fill="#fbbf24" />
+                </motion.g>
+              </svg>
+            </motion.div>
+          </motion.div>
+        </div>
+      )}
 
       {/* === LAYER D: Foreground bottom gradient === */}
       <div

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { useProfile } from "@/context/ProfileContext";
+import { useSoundtrack } from "@/context/SoundtrackContext";
 import { CINEMATIC_SCENES } from "@/lib/story/cinematicScenes";
 import { CosmicStoryBackground } from "./CosmicStoryBackground";
 
@@ -31,14 +32,19 @@ export function CinematicStoryExperience() {
   const [sceneIndex, setSceneIndex] = useState(0);
   const [blockIndex, setBlockIndex] = useState(0);
   const [isEntering, setIsEntering] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(false);
 
-  // Audio synthesis reference
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
+  const { isMuted, toggleMute, playTrack } = useSoundtrack();
+  const soundEnabled = !isMuted;
 
   const currentScene = CINEMATIC_SCENES[sceneIndex];
   const isFinalScene = sceneIndex === CINEMATIC_SCENES.length - 1;
+
+  const handleToggleSound = useCallback(() => {
+    const nextMuted = toggleMute();
+    if (!nextMuted) {
+      playTrack("intro");
+    }
+  }, [toggleMute, playTrack]);
 
   // Auto-redirect returning users if they completed intro and did not ask for replay
   useEffect(() => {
@@ -56,92 +62,6 @@ export function CinematicStoryExperience() {
       }
     }
   }, [authLoading, profileLoading, firebaseUser, profile, isReplayMode, router]);
-
-  // Handle ambient soothing sound toggle
-  useEffect(() => {
-    if (!soundEnabled) {
-      if (gainNodeRef.current && audioContextRef.current) {
-        const ctx = audioContextRef.current;
-        gainNodeRef.current.gain.setValueAtTime(gainNodeRef.current.gain.value, ctx.currentTime);
-        gainNodeRef.current.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + 0.8);
-        setTimeout(() => {
-          ctx.suspend().catch(() => {});
-        }, 850);
-      }
-      return;
-    }
-
-    try {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!audioContextRef.current) {
-        const ctx = new AudioCtx();
-        audioContextRef.current = ctx;
-
-        const masterGain = ctx.createGain();
-        masterGain.gain.setValueAtTime(0.0001, ctx.currentTime);
-        gainNodeRef.current = masterGain;
-
-        const filter = ctx.createBiquadFilter();
-        filter.type = "lowpass";
-        filter.frequency.setValueAtTime(320, ctx.currentTime);
-        filter.Q.setValueAtTime(1.5, ctx.currentTime);
-
-        // Harmonic oscillator 1 (110 Hz - A2)
-        const osc1 = ctx.createOscillator();
-        osc1.type = "sine";
-        osc1.frequency.setValueAtTime(110, ctx.currentTime);
-
-        // Harmonic oscillator 2 (165 Hz - E3)
-        const osc2 = ctx.createOscillator();
-        osc2.type = "sine";
-        osc2.frequency.setValueAtTime(165, ctx.currentTime);
-
-        // Chime oscillator (330 Hz - E4)
-        const osc3 = ctx.createOscillator();
-        osc3.type = "sine";
-        osc3.frequency.setValueAtTime(330, ctx.currentTime);
-
-        const subGain = ctx.createGain();
-        subGain.gain.setValueAtTime(0.2, ctx.currentTime);
-        osc3.connect(subGain);
-        subGain.connect(filter);
-
-        osc1.connect(filter);
-        osc2.connect(filter);
-        filter.connect(masterGain);
-        masterGain.connect(ctx.destination);
-
-        osc1.start();
-        osc2.start();
-        osc3.start();
-      }
-
-      if (audioContextRef.current.state === "suspended") {
-        audioContextRef.current.resume();
-      }
-
-      if (gainNodeRef.current && audioContextRef.current) {
-        const ctx = audioContextRef.current;
-        gainNodeRef.current.gain.setValueAtTime(gainNodeRef.current.gain.value, ctx.currentTime);
-        gainNodeRef.current.gain.linearRampToValueAtTime(0.035, ctx.currentTime + 1.2);
-      }
-    } catch {
-      // Audio autoplay policy fallback
-    }
-
-    return () => {
-      // Cleanup on unmount handled in parent hook
-    };
-  }, [soundEnabled]);
-
-  // Teardown audio on unmount
-  useEffect(() => {
-    return () => {
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {});
-      }
-    };
-  }, []);
 
   // Completion / Exit handler
   const handleComplete = useCallback(async () => {
@@ -228,7 +148,7 @@ export function CinematicStoryExperience() {
         handleComplete();
       } else if (e.key === "m" || e.key === "M") {
         e.preventDefault();
-        setSoundEnabled((s) => !s);
+        handleToggleSound();
       }
     };
 
@@ -289,7 +209,7 @@ export function CinematicStoryExperience() {
 
           <button
             type="button"
-            onClick={() => setSoundEnabled((s) => !s)}
+            onClick={handleToggleSound}
             className="flex items-center gap-1.5 rounded-full border border-white/10 bg-slate-900/60 px-3 py-1 text-xs text-ink-muted backdrop-blur-md transition-colors hover:border-white/20 hover:text-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
             aria-label={soundEnabled ? "Mute ambient audio" : "Enable soothing ambient audio"}
             title="Press 'M' to toggle audio"

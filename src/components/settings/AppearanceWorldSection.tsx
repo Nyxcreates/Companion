@@ -5,14 +5,20 @@ import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useWorldTheme } from "@/context/WorldThemeContext";
+import { useSoundtrack } from "@/context/SoundtrackContext";
 import { useToast } from "@/context/ToastContext";
 import { WORLD_THEMES, normalizeLivingEnvironmentId } from "@/lib/world/worldThemes";
+import { getWorldPersonality } from "@/lib/worlds/personality";
 import { LivingWorldBackdrop } from "@/components/world/LivingWorldBackdrop";
+import { LivingCompanionGuide } from "@/components/character/LivingCompanionGuide";
+import { Volume2, VolumeX, Music, Sparkles } from "lucide-react";
 import type { AppTheme, LivingEnvironmentId } from "@/types/profile";
+import type { AudioTrackId } from "@/lib/audio/soundtrack";
 
 export function AppearanceWorldSection() {
   const router = useRouter();
-  const { theme, livingEnvironment, setTheme, setLivingEnvironment } = useWorldTheme();
+  const { theme, livingEnvironment, activeReaction, setTheme, setLivingEnvironment } = useWorldTheme();
+  const { isMuted, volume, activeTrack, toggleMute, setVolume, playTrack } = useSoundtrack();
   const { showToast } = useToast();
 
   const canonicalActiveEnv = normalizeLivingEnvironmentId(livingEnvironment);
@@ -21,6 +27,22 @@ export function AppearanceWorldSection() {
 
   const activeEnvForPreview = previewEnv ?? canonicalActiveEnv;
   const activeMeta = WORLD_THEMES.find((w) => w.id === activeEnvForPreview) ?? WORLD_THEMES[0];
+  const previewPersonality = getWorldPersonality(activeEnvForPreview);
+
+  const activeReactionOrDialogue =
+    activeReaction && activeReaction.envId === activeEnvForPreview
+      ? activeReaction
+      : previewEnv
+      ? {
+          line: previewPersonality.themeChangeReaction.line,
+          pose: previewPersonality.themeChangeReaction.pose,
+          gaze: previewPersonality.themeChangeReaction.gaze,
+        }
+      : {
+          line: previewPersonality.greetingLines[0],
+          pose: previewPersonality.idleAnimation.pose,
+          gaze: previewPersonality.idleAnimation.gaze,
+        };
 
   const handleSelectTheme = async (newTheme: AppTheme) => {
     try {
@@ -36,6 +58,9 @@ export function AppearanceWorldSection() {
     try {
       await setLivingEnvironment(envId);
       setPreviewEnv(null);
+      if (!isMuted) {
+        playTrack(envId as AudioTrackId);
+      }
       const meta = WORLD_THEMES.find((w) => w.id === envId);
       showToast(`Living environment updated to ${meta?.name ?? envId}!`, "success");
     } catch {
@@ -123,16 +148,37 @@ export function AppearanceWorldSection() {
           </p>
         </div>
 
-        {/* Live Interactive Preview Box */}
-        <div className="relative h-48 w-full overflow-hidden rounded-2xl border border-white/10 shadow-inner bg-slate-950">
+        {/* Live Interactive Preview Box with Companion Reaction */}
+        <div
+          className="relative min-h-[260px] sm:min-h-[290px] w-full overflow-hidden rounded-2xl border border-white/10 shadow-inner bg-slate-950 flex flex-col items-center justify-center p-4 transition-all duration-700"
+          style={
+            {
+              "--accent-primary": previewPersonality.companionLook.accentPrimary,
+              "--accent-secondary": previewPersonality.companionLook.accentSecondary,
+              "--world-glow": previewPersonality.companionLook.glowColor,
+              "--world-halo": previewPersonality.companionLook.haloColor,
+            } as React.CSSProperties
+          }
+        >
           <div className="absolute inset-0">
             <LivingWorldBackdrop environment={activeEnvForPreview} calm={false} />
           </div>
-          <div className="absolute bottom-3 left-3 flex items-center gap-2.5 rounded-full border border-white/15 bg-slate-900/85 px-3.5 py-1.5 text-xs text-white backdrop-blur-md shadow-md">
-            <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
+
+          <div className="relative z-10 w-full max-w-md my-auto">
+            <LivingCompanionGuide
+              pose={activeReactionOrDialogue.pose}
+              gaze={activeReactionOrDialogue.gaze}
+              dialogueText={activeReactionOrDialogue.line}
+              name={previewPersonality.companionLook.badgeLabel}
+              className="scale-90"
+            />
+          </div>
+
+          <div className="absolute bottom-3 left-3 flex items-center gap-2.5 rounded-full border border-white/15 bg-slate-900/85 px-3.5 py-1.5 text-xs text-white backdrop-blur-md shadow-md z-20">
+            <span className="h-2 w-2 rounded-full animate-pulse" style={{ backgroundColor: previewPersonality.companionLook.accentPrimary }} />
             <span className="text-sm">{activeMeta.icon}</span>
             <span className="font-mono uppercase tracking-wider text-[11px] font-semibold">
-              Previewing: {activeMeta.name}
+              {activeEnvForPreview === canonicalActiveEnv ? "Active" : "Previewing"}: {activeMeta.name}
             </span>
             <span className="text-[10px] text-ink-muted hidden sm:inline">
               ({activeMeta.subtitle})
@@ -190,7 +236,87 @@ export function AppearanceWorldSection() {
         </div>
       </Card>
 
-      {/* 3. Replay Story Card */}
+      {/* 3. Ambient Soundtrack & Audio Card */}
+      <Card className="flex flex-col gap-5 p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-400/10 text-cyan-400">
+                <Music className="h-4 w-4" />
+              </div>
+              <h2 className="font-display text-lg font-semibold text-ink-primary">
+                Ambient Soundtrack & Audio
+              </h2>
+            </div>
+            <p className="text-sm text-ink-secondary mt-1">
+              Immersive procedural soundscapes and gentle ambient music that flow with your living world.
+            </p>
+          </div>
+
+          {/* Sound Mute / Unmute Button */}
+          <Button
+            size="sm"
+            variant={isMuted ? "secondary" : "primary"}
+            onClick={() => {
+              const nextMuted = toggleMute();
+              if (!nextMuted) {
+                playTrack(canonicalActiveEnv as AudioTrackId);
+                showToast("Ambient soundtrack enabled", "success");
+              } else {
+                showToast("Ambient soundtrack muted", "info");
+              }
+            }}
+            className="inline-flex items-center gap-2 self-start sm:self-auto text-xs"
+          >
+            {isMuted ? <VolumeX className="h-4 w-4 text-ink-muted" /> : <Volume2 className="h-4 w-4 text-cyan-300" />}
+            <span>{isMuted ? "Sound Muted (Click to Unmute)" : "Sound Active"}</span>
+          </Button>
+        </div>
+
+        {/* Master Volume Slider */}
+        <div className="rounded-xl border border-white/10 bg-slate-900/60 p-4 flex flex-col gap-3">
+          <div className="flex items-center justify-between text-xs font-medium">
+            <span className="text-white flex items-center gap-2">
+              <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
+              Master Ambient Volume
+            </span>
+            <span className="font-mono text-cyan-300">{Math.round(volume * 100)}%</span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <VolumeX className="h-4 w-4 text-ink-muted shrink-0" />
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={volume}
+              onChange={(e) => {
+                const newVol = parseFloat(e.target.value);
+                setVolume(newVol);
+                if (isMuted && newVol > 0) {
+                  toggleMute();
+                  playTrack(canonicalActiveEnv as AudioTrackId);
+                }
+              }}
+              className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-slate-800 accent-cyan-400 transition-all hover:bg-slate-700"
+              aria-label="Master ambient volume"
+            />
+            <Volume2 className="h-4 w-4 text-cyan-400 shrink-0" />
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between pt-1 text-[11px] text-ink-muted gap-1">
+            <span>
+              {isMuted
+                ? "Audio muted — tap slider or toggle above to begin ambient playback"
+                : `Playing: ${activeTrack ?? canonicalActiveEnv} ambient pad`}
+            </span>
+            <span className="font-mono text-[10px] text-cyan-400/80">Web Audio API · Realtime Synth</span>
+          </div>
+        </div>
+      </Card>
+
+      {/* 4. Replay Story Card */}
       <Card className="flex flex-col gap-4 p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>

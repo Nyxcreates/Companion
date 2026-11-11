@@ -1,8 +1,9 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { seededRandom } from "@/lib/pseudoRandom";
+import { useWorldScheduler } from "@/lib/world/useWorldScheduler";
 
 interface AutumnReverieProps {
   calm?: boolean;
@@ -20,13 +21,16 @@ interface Leaf {
 }
 
 export function AutumnReverieLivingWorld({ calm = false }: AutumnReverieProps) {
-  const prefersReducedMotion = useReducedMotion();
+  const { isTabVisible, isMobile, isMomentActive, momentCount, prefersReducedMotion } =
+    useWorldScheduler({ minIntervalSeconds: 22, maxIntervalSeconds: 52, momentDurationMs: 7000 });
+
   const [leaves, setLeaves] = useState<Leaf[]>([]);
   const [imgLoaded, setImgLoaded] = useState(false);
 
   useEffect(() => {
     const colors = ["#f97316", "#fbbf24", "#ea580c", "#e11d48", "#dc2626", "#fb923c"];
-    const list: Leaf[] = Array.from({ length: calm ? 12 : 26 }).map((_, i) => {
+    const leafCount = isMobile ? (calm ? 7 : 14) : (calm ? 12 : 26);
+    const list: Leaf[] = Array.from({ length: leafCount }).map((_, i) => {
       const seed = i * 39.8;
       return {
         id: i,
@@ -40,7 +44,9 @@ export function AutumnReverieLivingWorld({ calm = false }: AutumnReverieProps) {
       };
     });
     setLeaves(list);
-  }, [calm]);
+  }, [calm, isMobile]);
+
+  const shouldAnimate = !prefersReducedMotion && !calm && isTabVisible;
 
   return (
     <div
@@ -79,22 +85,24 @@ export function AutumnReverieLivingWorld({ calm = false }: AutumnReverieProps) {
       />
 
       {/* === LAYER B: Atmospheric twilight glow on horizon === */}
-      <motion.div
-        className="absolute inset-x-0 pointer-events-none"
-        style={{
-          bottom: "30%",
-          height: "200px",
-          background:
-            "radial-gradient(ellipse at 50% 100%, rgba(251,146,60,0.22) 0%, rgba(244,63,94,0.1) 40%, transparent 70%)",
-          filter: "blur(30px)",
-          opacity: calm ? 0.3 : 0.6,
-        }}
-        animate={prefersReducedMotion || calm ? {} : { opacity: [0.5, 0.8, 0.5] }}
-        transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
-      />
+      {shouldAnimate && (
+        <motion.div
+          className="absolute inset-x-0 pointer-events-none"
+          style={{
+            bottom: "30%",
+            height: "200px",
+            background:
+              "radial-gradient(ellipse at 50% 100%, rgba(251,146,60,0.22) 0%, rgba(244,63,94,0.1) 40%, transparent 70%)",
+            filter: "blur(30px)",
+            opacity: calm ? 0.3 : 0.6,
+          }}
+          animate={{ opacity: [0.5, 0.8, 0.5] }}
+          transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
+        />
+      )}
 
       {/* === LAYER B: Warm mist over hills === */}
-      {!prefersReducedMotion && !calm && (
+      {shouldAnimate && (
         <motion.div
           className="absolute inset-x-0 pointer-events-none opacity-22"
           style={{ bottom: "20%", height: "120px" }}
@@ -105,7 +113,7 @@ export function AutumnReverieLivingWorld({ calm = false }: AutumnReverieProps) {
         </motion.div>
       )}
 
-      {/* === LAYER C: Tumbling maple leaves === */}
+      {/* === LAYER C: Tumbling maple leaves with wind gusts === */}
       <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
         {leaves.map((leaf) => (
           <motion.div
@@ -113,13 +121,13 @@ export function AutumnReverieLivingWorld({ calm = false }: AutumnReverieProps) {
             className="absolute"
             style={{ left: `${leaf.x}%`, top: "-4%" }}
             animate={
-              prefersReducedMotion || calm
+              !shouldAnimate
                 ? { y: "115vh", opacity: 0 }
                 : {
-                    y: ["0vh", "115vh"],
-                    x: [0, leaf.drift * 0.4, leaf.drift, leaf.drift * 0.3],
-                    rotate: [leaf.spin, leaf.spin + 200, leaf.spin + 420],
-                    opacity: [0, 0.9, 0.75, 0],
+                    y: ["0vh", "30vh", "65vh", "115vh"],
+                    x: [0, leaf.drift * 0.3, leaf.drift + 35, leaf.drift * 0.7 + 50],
+                    rotate: [leaf.spin, leaf.spin + 180, leaf.spin + 360, leaf.spin + 540],
+                    opacity: [0, 0.9, 0.85, 0],
                   }
             }
             transition={{
@@ -181,6 +189,62 @@ export function AutumnReverieLivingWorld({ calm = false }: AutumnReverieProps) {
             </div>
           ))}
         </>
+      )}
+
+      {/* Drifting warm twilight sunbeams */}
+      {shouldAnimate && (
+        <motion.div
+          className="absolute inset-0 pointer-events-none"
+          animate={{
+            opacity: [0.15, 0.35, 0.15],
+            x: [0, 8, 0],
+          }}
+          transition={{ duration: 16, repeat: Infinity, ease: "easeInOut" }}
+          style={{
+            background:
+              "radial-gradient(ellipse at 75% 25%, rgba(251,146,60,0.2) 0%, rgba(244,63,94,0.12) 35%, transparent 65%)",
+          }}
+        />
+      )}
+
+      {/* === Timed Rare Moment (every 20-60s): Migrating flock of birds in V-formation across twilight sky === */}
+      {isMomentActive && !prefersReducedMotion && isTabVisible && (
+        <div key={momentCount} className="absolute inset-0 pointer-events-none overflow-hidden z-20">
+          <motion.div
+            className="absolute"
+            initial={{ left: "-15%", top: "22%", opacity: 0 }}
+            animate={{
+              left: ["-15%", "110%"],
+              top: ["22%", "14%"],
+              opacity: [0, 0.65, 0.7, 0],
+            }}
+            transition={{ duration: 7, ease: "linear" }}
+          >
+            {/* V-formation flock */}
+            <svg viewBox="0 0 120 60" className="h-10 w-24 sm:h-14 sm:w-32" fill="none">
+              {[
+                { x: 60, y: 15, delay: 0 },
+                { x: 45, y: 24, delay: 0.1 },
+                { x: 75, y: 24, delay: 0.15 },
+                { x: 30, y: 35, delay: 0.2 },
+                { x: 90, y: 35, delay: 0.25 },
+                { x: 15, y: 46, delay: 0.3 },
+                { x: 105, y: 46, delay: 0.35 },
+              ].map((bird, idx) => (
+                <motion.path
+                  key={idx}
+                  d={`M${bird.x - 7} ${bird.y + 3} Q${bird.x} ${bird.y - 4} ${bird.x + 7} ${bird.y + 3}`}
+                  stroke="rgba(35, 18, 10, 0.85)"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  animate={{ scaleY: [1, 0.5, 1.2, 1] }}
+                  transition={{ duration: 0.65, repeat: Infinity, delay: bird.delay, ease: "easeInOut" }}
+                  style={{ transformOrigin: `${bird.x}px ${bird.y}px` }}
+                />
+              ))}
+            </svg>
+          </motion.div>
+        </div>
       )}
 
       {/* === LAYER D: Bottom depth gradient === */}

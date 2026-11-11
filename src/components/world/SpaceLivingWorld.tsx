@@ -1,8 +1,9 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { seededRandom } from "@/lib/pseudoRandom";
+import { useWorldScheduler } from "@/lib/world/useWorldScheduler";
 
 interface SpaceLivingWorldProps {
   interactive?: boolean;
@@ -28,12 +29,15 @@ export function SpaceLivingWorld({
   onSelectObject,
   activeObjectId,
 }: SpaceLivingWorldProps) {
-  const prefersReducedMotion = useReducedMotion();
+  const { isTabVisible, isMobile, isMomentActive, momentCount, prefersReducedMotion } =
+    useWorldScheduler({ minIntervalSeconds: 22, maxIntervalSeconds: 50, momentDurationMs: 4000 });
+
   const [stars, setStars] = useState<StarNode[]>([]);
   const [imgLoaded, setImgLoaded] = useState(false);
 
   useEffect(() => {
-    const generated: StarNode[] = Array.from({ length: calm ? 40 : 70 }).map((_, i) => {
+    const starCount = isMobile ? (calm ? 20 : 35) : (calm ? 40 : 70);
+    const generated: StarNode[] = Array.from({ length: starCount }).map((_, i) => {
       const seed = i * 31.415;
       const depthTier = i % 3 === 0 ? 1 : i % 3 === 1 ? 2 : 3;
       return {
@@ -48,7 +52,9 @@ export function SpaceLivingWorld({
       };
     });
     setStars(generated);
-  }, [calm]);
+  }, [calm, isMobile]);
+
+  const shouldAnimate = !prefersReducedMotion && !calm && isTabVisible;
 
   const constellationPoints = [
     { x: 38, y: 28, label: "Conversation" },
@@ -110,20 +116,34 @@ export function SpaceLivingWorld({
         }}
       />
 
-      {/* === LAYER B: Atmospheric slow camera drift === */}
-      {!prefersReducedMotion && !calm && (
-        <motion.div
-          className="absolute inset-0 pointer-events-none"
-          animate={{ scale: [1, 1.025, 1], x: [0, 6, 0] }}
-          transition={{ duration: 40, repeat: Infinity, ease: "easeInOut" }}
-          style={{
-            background:
-              "radial-gradient(ellipse at 60% 30%, rgba(168,85,247,0.06) 0%, transparent 50%)",
-          }}
-        />
+      {/* === LAYER B: Atmospheric slow camera drift & nebula pulse === */}
+      {shouldAnimate && (
+        <>
+          <motion.div
+            className="absolute inset-0 pointer-events-none"
+            animate={{ scale: [1, 1.025, 1], x: [0, 6, 0] }}
+            transition={{ duration: 40, repeat: Infinity, ease: "easeInOut" }}
+            style={{
+              background:
+                "radial-gradient(ellipse at 60% 30%, rgba(168,85,247,0.06) 0%, transparent 50%)",
+            }}
+          />
+          <motion.div
+            className="absolute inset-0 pointer-events-none"
+            animate={{
+              opacity: [0.15, 0.35, 0.15],
+              scale: [1, 1.05, 1],
+            }}
+            transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
+            style={{
+              background:
+                "radial-gradient(ellipse at 40% 35%, rgba(94,231,224,0.14) 0%, rgba(124,92,255,0.1) 40%, transparent 65%)",
+            }}
+          />
+        </>
       )}
 
-      {/* === LAYER C: Twinkling Stars (3 depth tiers) === */}
+      {/* === LAYER C: Twinkling & Drifting Stars (3 depth tiers) === */}
       <div className="absolute inset-0" aria-hidden="true">
         {stars.map((star) => (
           <motion.div
@@ -142,11 +162,13 @@ export function SpaceLivingWorld({
                   : "none",
             }}
             animate={
-              prefersReducedMotion || calm
-                ? { opacity: star.opacity }
+              !shouldAnimate
+                ? { opacity: star.opacity, x: 0, y: 0 }
                 : {
                     opacity: [star.opacity * 0.3, star.opacity, star.opacity * 0.3],
                     scale: star.depth === 3 ? [1, 1.3, 1] : [1, 1, 1],
+                    x: [0, star.depth === 3 ? 8 : star.depth === 2 ? 4 : 2, 0],
+                    y: [0, star.depth === 3 ? -6 : star.depth === 2 ? -3 : -1, 0],
                   }
             }
             transition={{
@@ -302,7 +324,7 @@ export function SpaceLivingWorld({
       </motion.div>
 
       {/* === LAYER C: Occasional Shooting Star (Layer C) === */}
-      {!prefersReducedMotion && !calm && (
+      {shouldAnimate && (
         <motion.div
           className="absolute h-px w-28 bg-gradient-to-r from-transparent via-cyan-200/90 to-white/80 rounded-full pointer-events-none"
           style={{ transform: "rotate(-32deg)", filter: "blur(0.5px)" }}
@@ -313,7 +335,7 @@ export function SpaceLivingWorld({
       )}
 
       {/* Second staggered shooting star */}
-      {!prefersReducedMotion && !calm && (
+      {shouldAnimate && (
         <motion.div
           className="absolute h-px w-16 bg-gradient-to-r from-transparent via-violet-300/80 to-white/60 rounded-full pointer-events-none"
           style={{ transform: "rotate(-28deg)" }}
@@ -321,6 +343,33 @@ export function SpaceLivingWorld({
           animate={{ top: ["5%", "25%"], left: ["40%", "88%"], opacity: [0, 0.8, 0] }}
           transition={{ duration: 0.9, repeat: Infinity, repeatDelay: 17, delay: 5, ease: "easeOut" }}
         />
+      )}
+
+      {/* === Timed Rare Moment (every 20-60s): Radiant shooting starburst cascade === */}
+      {isMomentActive && !prefersReducedMotion && isTabVisible && (
+        <div key={momentCount} className="absolute inset-0 pointer-events-none overflow-hidden z-20">
+          <motion.div
+            className="absolute h-[2.5px] w-56 rounded-full bg-gradient-to-r from-transparent via-cyan-100 to-white shadow-[0_0_15px_#5ee7e0]"
+            style={{ transform: "rotate(-36deg)", filter: "blur(0.2px)" }}
+            initial={{ top: "6%", left: "-10%", opacity: 0, scale: 0.8 }}
+            animate={{ top: ["6%", "60%"], left: ["-10%", "90%"], opacity: [0, 1, 1, 0], scale: [0.8, 1.4, 0.8] }}
+            transition={{ duration: 1.8, ease: "easeOut" }}
+          />
+          <motion.div
+            className="absolute rounded-full pointer-events-none"
+            style={{
+              top: "28%",
+              left: "42%",
+              width: "240px",
+              height: "240px",
+              background: "radial-gradient(circle, rgba(94,231,224,0.35) 0%, rgba(124,92,255,0.18) 50%, transparent 75%)",
+              filter: "blur(24px)",
+            }}
+            initial={{ opacity: 0, scale: 0.5 }}
+            animate={{ opacity: [0, 0.9, 0], scale: [0.5, 1.6, 2.2] }}
+            transition={{ duration: 2.2, delay: 0.35, ease: "easeOut" }}
+          />
+        </div>
       )}
 
       {/* === LAYER D: Foreground star dust haze === */}

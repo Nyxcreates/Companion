@@ -25,6 +25,7 @@ export default function SignupPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [emailLoading, setEmailLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [redirectResolving, setRedirectResolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // If user is already authenticated, route them forward
@@ -34,8 +35,9 @@ export default function SignupPage() {
     }
   }, [firebaseUser, authLoading, router]);
 
-  // Handle Google redirect return silently if one completed — never show error on fresh mount
+  // Handle Google redirect return when arriving back from Google sign-in
   useEffect(() => {
+    setRedirectResolving(true);
     handleGoogleRedirectResult()
       .then((result) => {
         if (result?.user) {
@@ -43,7 +45,11 @@ export default function SignupPage() {
         }
       })
       .catch((err) => {
-        console.debug("[Companion Auth] No redirect session to resolve:", err);
+        console.error("[Companion Auth] Google redirect sign-up failed:", err);
+        setError(getAuthErrorMessage(err));
+      })
+      .finally(() => {
+        setRedirectResolving(false);
       });
   }, [router]);
 
@@ -78,7 +84,7 @@ export default function SignupPage() {
     }
   }
 
-  const isAnyLoading = emailLoading || googleLoading;
+  const isAnyLoading = emailLoading || googleLoading || redirectResolving;
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center gap-6 px-4">
@@ -155,10 +161,10 @@ export default function SignupPage() {
           variant="secondary"
           className="w-full"
           onClick={handleGoogle}
-          isLoading={googleLoading}
+          isLoading={googleLoading || redirectResolving}
           disabled={isAnyLoading}
         >
-          {!googleLoading && (
+          {!(googleLoading || redirectResolving) && (
             <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
               <path
                 d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"

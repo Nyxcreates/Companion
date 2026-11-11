@@ -1,18 +1,17 @@
 import mongoose, { Schema, type Document, type Model } from "mongoose";
 import { NOTIFICATION_CATEGORIES, type NotificationCategory } from "./Notification";
-export type { NotificationCategory };
+import type {
+  CheckInFrequency,
+  FloatingPresenceMode,
+  LearnedInterventionWeights,
+} from "@/types/notification";
 
-export type CheckInFrequency = "gentle" | "balanced" | "frequent";
-export type FloatingPresenceMode = "always" | "subtle" | "off";
-
-export interface LearnedInterventionWeights {
-  waterDismissCount: number;
-  waterAcceptCount: number;
-  breakDismissCount: number;
-  breakAcceptCount: number;
-  preferredBreakActivity: string | null; // e.g. 'walk', 'music', 'stretch', 'water', 'eyes'
-  lastInterventionAccepted: string | null;
-}
+export type {
+  NotificationCategory,
+  CheckInFrequency,
+  FloatingPresenceMode,
+  LearnedInterventionWeights,
+};
 
 export interface NotificationPreferenceDocument extends Document {
   firebaseUid: string;

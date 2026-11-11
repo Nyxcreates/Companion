@@ -6,6 +6,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { useProfile } from "@/context/ProfileContext";
 import { useWorldTheme } from "@/context/WorldThemeContext";
+import { useSoundtrack } from "@/context/SoundtrackContext";
 import { SpaceLivingWorld } from "@/components/world/SpaceLivingWorld";
 import { GardenLivingWorld } from "@/components/world/GardenLivingWorld";
 import { OceanLivingWorld } from "@/components/world/OceanLivingWorld";
@@ -85,11 +86,15 @@ export function LivingWorldStoryExperience() {
 
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
   const [isEntering, setIsEntering] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(false);
+  const { isMuted, toggleMute, playTrack } = useSoundtrack();
+  const soundEnabled = !isMuted;
 
-  // Audio synthesis reference
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
+  const handleToggleSound = useCallback(() => {
+    const nextMuted = toggleMute();
+    if (!nextMuted) {
+      playTrack("intro");
+    }
+  }, [toggleMute, playTrack]);
 
   const scene = DISCOVERY_SCENES[currentSceneIndex];
   const isFinalScene = currentSceneIndex === DISCOVERY_SCENES.length - 1;
@@ -110,84 +115,6 @@ export function LivingWorldStoryExperience() {
       }
     }
   }, [authLoading, profileLoading, firebaseUser, profile, isReplayMode, router]);
-
-  // Ambient soothing audio synthesizer (zero external network requests)
-  useEffect(() => {
-    if (!soundEnabled) {
-      if (gainNodeRef.current && audioContextRef.current) {
-        const ctx = audioContextRef.current;
-        gainNodeRef.current.gain.setValueAtTime(gainNodeRef.current.gain.value, ctx.currentTime);
-        gainNodeRef.current.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + 0.6);
-        setTimeout(() => {
-          ctx.suspend().catch(() => {});
-        }, 650);
-      }
-      return;
-    }
-
-    try {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!audioContextRef.current) {
-        const ctx = new AudioCtx();
-        audioContextRef.current = ctx;
-
-        const masterGain = ctx.createGain();
-        masterGain.gain.setValueAtTime(0.0001, ctx.currentTime);
-        gainNodeRef.current = masterGain;
-
-        const filter = ctx.createBiquadFilter();
-        filter.type = "lowpass";
-        filter.frequency.setValueAtTime(320, ctx.currentTime);
-        filter.Q.setValueAtTime(1.5, ctx.currentTime);
-
-        // Harmonic oscillator 1 (110 Hz - A2)
-        const osc1 = ctx.createOscillator();
-        osc1.type = "sine";
-        osc1.frequency.setValueAtTime(110, ctx.currentTime);
-
-        // Harmonic oscillator 2 (165 Hz - E3)
-        const osc2 = ctx.createOscillator();
-        osc2.type = "sine";
-        osc2.frequency.setValueAtTime(165, ctx.currentTime);
-
-        // Harmonic oscillator 3 (220 Hz - A3)
-        const osc3 = ctx.createOscillator();
-        osc3.type = "sine";
-        osc3.frequency.setValueAtTime(220, ctx.currentTime);
-
-        osc1.connect(filter);
-        osc2.connect(filter);
-        osc3.connect(filter);
-        filter.connect(masterGain);
-        masterGain.connect(ctx.destination);
-
-        osc1.start();
-        osc2.start();
-        osc3.start();
-      }
-
-      if (audioContextRef.current.state === "suspended") {
-        audioContextRef.current.resume();
-      }
-
-      if (gainNodeRef.current && audioContextRef.current) {
-        const ctx = audioContextRef.current;
-        gainNodeRef.current.gain.setValueAtTime(gainNodeRef.current.gain.value, ctx.currentTime);
-        gainNodeRef.current.gain.linearRampToValueAtTime(0.035, ctx.currentTime + 1.2);
-      }
-    } catch {
-      // Audio autoplay policy fallback
-    }
-  }, [soundEnabled]);
-
-  // Teardown audio on unmount
-  useEffect(() => {
-    return () => {
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {});
-      }
-    };
-  }, []);
 
   // Completion / Skip handler (Always accessible)
   const handleComplete = useCallback(async () => {
@@ -262,12 +189,15 @@ export function LivingWorldStoryExperience() {
   );
 
   const handleNext = useCallback(() => {
+    if (!isMuted) {
+      playTrack("intro");
+    }
     if (currentSceneIndex < DISCOVERY_SCENES.length - 1) {
       setCurrentSceneIndex((prev) => prev + 1);
     } else {
       handleComplete();
     }
-  }, [currentSceneIndex, handleComplete]);
+  }, [currentSceneIndex, handleComplete, isMuted, playTrack]);
 
   const handlePrev = useCallback(() => {
     if (currentSceneIndex > 0) {
@@ -299,13 +229,13 @@ export function LivingWorldStoryExperience() {
         handleComplete();
       } else if (e.key === "m" || e.key === "M") {
         e.preventDefault();
-        setSoundEnabled((s) => !s);
+        handleToggleSound();
       }
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleNext, handlePrev, handleComplete]);
+  }, [handleNext, handlePrev, handleComplete, handleToggleSound]);
 
   const companionName = profile?.companionName ?? "Nikki";
 
@@ -354,7 +284,7 @@ export function LivingWorldStoryExperience() {
 
           <button
             type="button"
-            onClick={() => setSoundEnabled((s) => !s)}
+            onClick={handleToggleSound}
             className="flex items-center gap-1.5 rounded-full border border-white/10 bg-slate-900/60 px-3 py-1 text-xs text-ink-muted backdrop-blur-md transition-colors hover:border-white/20 hover:text-white focus:outline-none focus:ring-1 focus:ring-cyan-400"
             aria-label={soundEnabled ? "Mute ambient audio" : "Enable ambient sound"}
             title="Press 'M' to toggle sound"

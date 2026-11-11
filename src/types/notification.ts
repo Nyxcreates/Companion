@@ -1,7 +1,18 @@
 import type { NotificationCategory } from "@/lib/notifications/categories";
-import type { CheckInFrequency, FloatingPresenceMode, LearnedInterventionWeights } from "@/models/NotificationPreference";
 
-export type { NotificationCategory, CheckInFrequency, FloatingPresenceMode, LearnedInterventionWeights };
+export type CheckInFrequency = "gentle" | "balanced" | "frequent";
+export type FloatingPresenceMode = "always" | "subtle" | "off";
+
+export interface LearnedInterventionWeights {
+  waterDismissCount: number;
+  waterAcceptCount: number;
+  breakDismissCount: number;
+  breakAcceptCount: number;
+  preferredBreakActivity: string | null;
+  lastInterventionAccepted: string | null;
+}
+
+export type { NotificationCategory };
 
 export interface NotificationItem {
   id: string;
