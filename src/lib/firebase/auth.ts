@@ -37,37 +37,42 @@ export async function signInWithEmail(
   return signInWithEmailAndPassword(requireAuth(), email, password);
 }
 
-function isMobileOrStandalone(): boolean {
-  if (typeof window === "undefined") return false;
-  const isStandalone =
-    window.matchMedia?.("(display-mode: standalone)")?.matches ||
-    (window.navigator as unknown as { standalone?: boolean })?.standalone === true;
-  const isMobile =
-    typeof navigator !== "undefined" &&
-    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  return Boolean(isStandalone || isMobile);
-}
-
 /**
- * Sign in with Google.
- * On mobile devices (e.g. Android phone) and PWA standalone mode, uses redirect
- * to avoid popup blockers and broken window.opener communication.
- * On desktop browsers, uses popup with graceful redirect fallback.
+ * Sign in with Google — Chrome M115+ compatible, works on Android & PWA.
+ *
+ * WHY WE USE signInWithPopup ON MOBILE (not redirect):
+ *
+ * signInWithRedirect is fundamentally broken on Chrome M115+ for apps hosted
+ * on third-party domains (like Vercel). Chrome's storage partitioning blocks
+ * the cross-origin <project>.firebaseapp.com iframe that Firebase uses to
+ * complete the redirect handshake, so getRedirectResult() silently returns
+ * null and the user is left on the login page.
+ *
+ * We have added an /__/auth/* proxy rewrite in next.config.mjs which
+ * mitigates this for redirect flows, but signInWithPopup is still more
+ * reliable because:
+ *   - On Android Chrome it opens a Chrome Custom Tab that completes OAuth
+ *     and closes cleanly, handing the credential back to the calling window
+ *     without any cross-origin storage issues.
+ *   - On desktop it opens a small popup window — same as before.
+ *   - On iOS Safari it falls back to redirect (popup is blocked) which now
+ *     works correctly through the proxy.
+ *
+ * IMPORTANT: signInWithGoogle() must be called synchronously from the button
+ * click handler (no preceding `await`) to preserve the user-gesture context
+ * that mobile browsers require before they will open a popup or Custom Tab.
  */
 export async function signInWithGoogle(): Promise<UserCredential | null> {
   const auth = requireAuth();
-
-  if (isMobileOrStandalone()) {
-    await signInWithRedirect(auth, googleProvider);
-    return null;
-  }
 
   try {
     return await signInWithPopup(auth, googleProvider);
   } catch (err) {
     const code = (err as { code?: string })?.code ?? "";
 
-    // If popup is explicitly blocked or unsupported, fall back to redirect
+    // signInWithPopup is blocked (e.g. iOS Safari in some contexts).
+    // Fall back to redirect — the /__/auth/* proxy in next.config.mjs makes
+    // this work on Vercel even under Chrome's storage partitioning.
     if (
       code === "auth/popup-blocked" ||
       code === "auth/operation-not-supported-in-this-environment"
@@ -76,7 +81,7 @@ export async function signInWithGoogle(): Promise<UserCredential | null> {
       return null;
     }
 
-    // If user cancelled the popup, do not redirect
+    // User deliberately closed the popup or cancelled — don't auto-redirect.
     if (
       code === "auth/popup-closed-by-user" ||
       code === "auth/cancelled-popup-request"
@@ -90,7 +95,11 @@ export async function signInWithGoogle(): Promise<UserCredential | null> {
 
 /**
  * Checks for any pending redirect auth result upon page load.
- * Returns null if no redirect sign-in was in flight.
+ *
+ * This runs on every login/signup page mount to catch users returning from a
+ * redirect-based Google sign-in (e.g. iOS Safari popup fallback). Returns null
+ * if no redirect flow was in flight — which is the normal case for popup-based
+ * sign-ins on Chrome/Android, where onAuthStateChanged fires directly.
  */
 export async function handleGoogleRedirectResult(): Promise<UserCredential | null> {
   if (!isFirebaseConfigured || !firebaseAuth) return null;
