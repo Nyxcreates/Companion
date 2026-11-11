@@ -7,6 +7,7 @@ import { WorldThemeContextProvider } from "@/context/WorldThemeContext";
 import { SoundtrackProvider } from "@/context/SoundtrackContext";
 import { NotificationProvider } from "@/context/NotificationContext";
 import { UsageProvider } from "@/context/UsageContext";
+import { PwaProvider } from "@/context/PwaContext";
 import { MotionProvider } from "@/components/providers/MotionProvider";
 import { StartupSequence } from "@/components/startup/StartupSequence";
 import "./globals.css";
@@ -25,8 +26,17 @@ const inter = localFont({
 
 export const metadata: Metadata = {
   title: "Companion",
-  description: "A small presence for your everyday life.",
+  description: "A small, proactive AI presence for your everyday life.",
   manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Companion",
+  },
+  icons: {
+    icon: "/favicon.ico",
+    apple: "/icons/apple-touch-icon.png",
+  },
 };
 
 export const viewport: Viewport = {
@@ -46,10 +56,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <SoundtrackProvider>
                   <NotificationProvider>
                     <UsageProvider>
-                      <MotionProvider>
-                        {children}
-                        <StartupSequence />
-                      </MotionProvider>
+                      <PwaProvider>
+                        <MotionProvider>
+                          {children}
+                          <StartupSequence />
+                        </MotionProvider>
+                      </PwaProvider>
                     </UsageProvider>
                   </NotificationProvider>
                 </SoundtrackProvider>

@@ -9,8 +9,9 @@ import { AppearanceWorldSection } from "@/components/settings/AppearanceWorldSec
 import { NotificationSettingsSection } from "@/components/settings/NotificationSettingsSection";
 import { DataPrivacySection } from "@/components/settings/DataPrivacySection";
 import { AccountSecuritySection } from "@/components/settings/AccountSecuritySection";
+import { AppInfoSection } from "@/components/settings/AppInfoSection";
 import { useAuth } from "@/context/AuthContext";
-import { User, Palette, Bell, Shield, Database, AlertCircle, RefreshCw } from "lucide-react";
+import { User, Palette, Bell, Shield, Database, AlertCircle, RefreshCw, Download } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 
 interface ErrorBoundaryProps {
@@ -67,6 +68,7 @@ class SettingsErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryS
 }
 
 const SETTINGS_SECTIONS = [
+  { id: "app-info", label: "App & Install", icon: <Download className="h-3.5 w-3.5" /> },
   { id: "profile", label: "Profile", icon: <User className="h-3.5 w-3.5" /> },
   { id: "appearance", label: "Appearance", icon: <Palette className="h-3.5 w-3.5" /> },
   { id: "notifications", label: "Nikki Presence", icon: <Bell className="h-3.5 w-3.5" /> },
@@ -118,6 +120,13 @@ export default function SettingsPage() {
               </a>
             ))}
           </div>
+        </div>
+
+        {/* 0. App & Install Information */}
+        <div id="app-info">
+          <SettingsErrorBoundary fallbackTitle="App & Install Information">
+            <AppInfoSection />
+          </SettingsErrorBoundary>
         </div>
 
         {/* 1. Profile & Companion */}

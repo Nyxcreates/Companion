@@ -1,10 +1,57 @@
 {
+  "$schema": "https://json.schemastore.org/web-manifest-combined.json",
   "name": "Companion",
   "short_name": "Companion",
-  "description": "A small presence for your everyday life.",
+  "description": "A small, proactive AI presence for your everyday life.",
   "start_url": "/",
+  "id": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait-primary",
   "background_color": "#0b0b1e",
   "theme_color": "#0b0b1e",
-  "icons": []
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": ["lifestyle", "productivity"],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "url": "/dashboard",
+      "description": "Open Companion dashboard and chat with Nikki"
+    },
+    {
+      "name": "Focus Session",
+      "url": "/focus",
+      "description": "Start a focused study or work session"
+    },
+    {
+      "name": "Daily Plan",
+      "url": "/plan",
+      "description": "Review today's goals and timetable"
+    }
+  ]
 }
