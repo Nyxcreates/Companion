@@ -100,10 +100,17 @@ export function NotificationSettingsSection() {
     resetLearned,
     requestBrowserPermission,
     browserPermissionStatus,
+    isPushSubscribed,
+    pushLoading,
+    subscribePush,
+    unsubscribePush,
+    sendTestPush,
   } = useNotifications();
 
   const [isSaving, setIsSaving] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
+  const [testingPush, setTestingPush] = useState(false);
+  const [testPushFeedback, setTestPushFeedback] = useState<{ success: boolean; message: string } | null>(null);
 
   // Native Android bridge detection
   const [isNativeApp, setIsNativeApp] = useState(false);
@@ -426,30 +433,101 @@ export function NotificationSettingsSection() {
           />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-ink-primary mb-1">
-            Web &amp; Device Notifications
-          </label>
-          <div className="flex items-center gap-2">
-            {browserPermissionStatus === "unsupported" ? (
-              <p className="text-xs text-ink-muted italic">
-                Notifications are not supported in this browser or environment.
+        <div className="sm:col-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-4 flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <Bell className="h-4 w-4 text-cyan-400" />
+                <h4 className="text-sm font-semibold text-white">Real Web Push Notifications</h4>
+                {isPushSubscribed ? (
+                  <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-medium bg-emerald-400/10 border border-emerald-400/20 px-2.5 py-0.5 rounded-full">
+                    <CheckCircle2 className="h-3 w-3" />
+                    Subscribed &amp; Ready
+                  </span>
+                ) : browserPermissionStatus === "granted" ? (
+                  <span className="text-[11px] text-amber-300 font-medium bg-amber-400/10 border border-amber-400/20 px-2.5 py-0.5 rounded-full">
+                    Permission Granted
+                  </span>
+                ) : browserPermissionStatus === "denied" ? (
+                  <span className="text-[11px] text-rose-400 font-medium bg-rose-400/10 border border-rose-400/20 px-2.5 py-0.5 rounded-full">
+                    Blocked by Browser
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-ink-muted bg-white/5 border border-white/10 px-2.5 py-0.5 rounded-full">
+                    Permission Needed
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-ink-muted mt-1 leading-snug">
+                Receive Nikki&apos;s check-ins, hydration prompts, and goal reminders even when Companion is completely closed.
               </p>
-            ) : (
-              <Button
-                size="sm"
-                variant={browserPermissionStatus === "granted" ? "ghost" : "secondary"}
-                onClick={() => requestBrowserPermission()}
-                className="text-xs"
-              >
-                {browserPermissionStatus === "granted"
-                  ? "✓ Push Notifications Active"
-                  : browserPermissionStatus === "denied"
-                    ? "Blocked in Browser"
-                    : "Enable Device Notifications"}
-              </Button>
-            )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {browserPermissionStatus === "unsupported" ? (
+                <span className="text-xs text-ink-muted italic">Unsupported in this browser</span>
+              ) : !isPushSubscribed ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  isLoading={pushLoading}
+                  onClick={() => requestBrowserPermission()}
+                  className="text-xs"
+                >
+                  {browserPermissionStatus === "granted" ? "Activate Web Push" : "Enable Push Notifications"}
+                </Button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    isLoading={testingPush}
+                    onClick={async () => {
+                      setTestingPush(true);
+                      setTestPushFeedback(null);
+                      try {
+                        const res = await sendTestPush();
+                        setTestPushFeedback(res);
+                        setTimeout(() => setTestPushFeedback(null), 5000);
+                      } finally {
+                        setTestingPush(false);
+                      }
+                    }}
+                    className="text-xs flex items-center gap-1.5"
+                  >
+                    <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
+                    <span>Send Test Push</span>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    isLoading={pushLoading}
+                    onClick={() => unsubscribePush()}
+                    className="text-xs text-ink-muted hover:text-rose-400"
+                  >
+                    Unsubscribe
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
+
+          {testPushFeedback && (
+            <div
+              className={`rounded-lg p-2.5 text-xs flex items-center gap-2 ${
+                testPushFeedback.success
+                  ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-300"
+                  : "bg-amber-500/10 border border-amber-500/20 text-amber-300"
+              }`}
+            >
+              {testPushFeedback.success ? (
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+              ) : (
+                <ShieldAlert className="h-4 w-4 shrink-0 text-amber-400" />
+              )}
+              <span>{testPushFeedback.message}</span>
+            </div>
+          )}
         </div>
       </div>
 

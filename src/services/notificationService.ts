@@ -13,7 +13,33 @@ import { GoalModel } from "@/models/Goal";
 import { ScheduleModel } from "@/models/Schedule";
 import { FocusSessionModel } from "@/models/FocusSession";
 import { EmotionModel } from "@/models/Emotion";
+import { sendPushToUser } from "@/lib/pushService";
 import type { NotificationItem, NotificationPreferences, CheckInTrigger } from "@/types/notification";
+
+export async function createNotification(data: {
+  firebaseUid: string;
+  category: NotificationCategory;
+  title: string;
+  body: string;
+  actionUrl?: string;
+  actionLabel?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<NotificationDocument> {
+  const notif = await NotificationModel.create(data);
+
+  // Proactively deliver via Web Push in background
+  sendPushToUser(data.firebaseUid, {
+    title: data.title,
+    body: data.body,
+    url: data.actionUrl || "/dashboard",
+    category: data.category,
+    tag: `companion-${data.category}`,
+  }).catch((err) => {
+    console.warn("[Companion Notification] Background push dispatch error:", err);
+  });
+
+  return notif;
+}
 
 function docToNotificationItem(doc: NotificationDocument): NotificationItem {
   return {
@@ -359,7 +385,7 @@ export async function evaluateProactiveContext(
 
       if (!recentNotif) {
         const isOverdue = task.dueDate && task.dueDate < now;
-        await NotificationModel.create({
+        await createNotification({
           firebaseUid,
           category: "task_reminder",
           title: isOverdue ? `Task Overdue: ${task.title}` : `Upcoming Task: ${task.title}`,
@@ -412,7 +438,7 @@ export async function evaluateProactiveContext(
       });
 
       if (!recentNotif) {
-        await NotificationModel.create({
+        await createNotification({
           firebaseUid,
           category: "goal_deadline",
           title: `Goal Deadline: ${goal.title}`,
@@ -445,7 +471,7 @@ export async function evaluateProactiveContext(
         });
 
         if (!recentNotif) {
-          await NotificationModel.create({
+          await createNotification({
             firebaseUid,
             category: "break_reminder",
             title: "Focus Break Time",
@@ -496,7 +522,7 @@ export async function evaluateProactiveContext(
         });
 
         if (!recentNotif) {
-          await NotificationModel.create({
+          await createNotification({
             firebaseUid,
             category: "mood_checkin",
             title: "Nikki Check-in",
@@ -573,7 +599,7 @@ export async function evaluateProactiveContext(
       });
 
       if (!recentSleepNotif) {
-        await NotificationModel.create({
+        await createNotification({
           firebaseUid,
           category: "sleep_reminder",
           title: "Late Night Reminder",
@@ -617,7 +643,7 @@ export async function evaluateProactiveContext(
     });
 
     if (!recentWaterNotif) {
-      await NotificationModel.create({
+      await createNotification({
         firebaseUid,
         category: "wellbeing_water_food",
         title: "Hydration Check-in",

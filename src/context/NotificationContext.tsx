@@ -18,6 +18,8 @@ interface NotificationContextValue {
   activeCheckIn: CheckInTrigger | null;
   isLoading: boolean;
   browserPermissionStatus: NotificationPermission | "unsupported";
+  isPushSubscribed: boolean;
+  pushLoading: boolean;
   fetchNotifications: () => Promise<void>;
   refetchPreferences: () => Promise<void>;
   evaluateCheckIns: () => Promise<void>;
@@ -34,6 +36,9 @@ interface NotificationContextValue {
   ) => Promise<void>;
   dismissCheckIn: () => void;
   requestBrowserPermission: () => Promise<NotificationPermission | "unsupported">;
+  subscribePush: () => Promise<boolean>;
+  unsubscribePush: () => Promise<boolean>;
+  sendTestPush: () => Promise<{ success: boolean; message: string }>;
 }
 
 const NotificationContext = createContext<NotificationContextValue | null>(null);
@@ -44,6 +49,18 @@ function getBrowserTimezone(): string {
   } catch {
     return "UTC";
   }
+}
+
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const buffer = new ArrayBuffer(rawData.length);
+  const outputArray = new Uint8Array(buffer);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
 }
 
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
@@ -58,6 +75,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const [browserPermissionStatus, setBrowserPermissionStatus] = useState<
     NotificationPermission | "unsupported"
   >("default");
+  const [isPushSubscribed, setIsPushSubscribed] = useState(false);
+  const [pushLoading, setPushLoading] = useState(false);
 
   const lastEvaluatedAtRef = useRef<number>(0);
 
@@ -70,6 +89,17 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       setBrowserPermissionStatus("unsupported");
     }
   }, []);
+
+  // Check if current browser already has an active Web Push subscription
+  useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.ready
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((sub) => {
+        setIsPushSubscribed(Boolean(sub));
+      })
+      .catch(() => {});
+  }, [firebaseUser]);
 
   const fetchPreferences = useCallback(async () => {
     if (!firebaseUser) return;
@@ -287,29 +317,124 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     }
   };
 
+  const subscribePush = async (): Promise<boolean> => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) {
+      return false;
+    }
+
+    setPushLoading(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+
+      if (!sub) {
+        // 1. Fetch public VAPID key dynamically from server
+        const res = await authFetch("/api/notifications/push");
+        const envelope = await parseApiResponse<{ publicKey: string; isConfigured: boolean }>(res);
+        const publicKey = envelope.data?.publicKey || process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+
+        if (!publicKey) {
+          console.warn("[NotificationContext] No VAPID public key available to subscribe.");
+          return false;
+        }
+
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey) as unknown as BufferSource,
+        });
+      }
+
+      if (sub) {
+        const subJson = sub.toJSON ? sub.toJSON() : sub;
+        await authFetch("/api/notifications/push", {
+          method: "POST",
+          body: JSON.stringify(subJson),
+        });
+        setIsPushSubscribed(true);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error("[NotificationContext] Push subscription error:", err);
+      return false;
+    } finally {
+      setPushLoading(false);
+    }
+  };
+
+  const unsubscribePush = async (): Promise<boolean> => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) {
+      return false;
+    }
+
+    setPushLoading(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await sub.unsubscribe();
+        await authFetch(`/api/notifications/push?endpoint=${encodeURIComponent(sub.endpoint)}`, {
+          method: "DELETE",
+        });
+      }
+      setIsPushSubscribed(false);
+      return true;
+    } catch (err) {
+      console.error("[NotificationContext] Push unsubscribe error:", err);
+      return false;
+    } finally {
+      setPushLoading(false);
+    }
+  };
+
+  const sendTestPush = async (): Promise<{ success: boolean; message: string }> => {
+    try {
+      const res = await authFetch("/api/notifications/push/test", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Nikki ✨",
+          body: "Hey! Just confirming that my check-ins can reach you even when Companion is closed.",
+          url: "/dashboard",
+        }),
+      });
+      const envelope = await parseApiResponse<{
+        success: boolean;
+        sentCount: number;
+        reason?: string;
+      }>(res);
+
+      if (res.ok && envelope.data?.success) {
+        return {
+          success: true,
+          message: `Test check-in sent successfully to ${envelope.data.sentCount} active device(s)!`,
+        };
+      }
+      return {
+        success: false,
+        message:
+          envelope.data?.reason ||
+          envelope.error?.message ||
+          "Delivery failed. Check that notifications are allowed on your device.",
+      };
+    } catch (err) {
+      return {
+        success: false,
+        message: err instanceof Error ? err.message : "Test push delivery request failed.",
+      };
+    }
+  };
+
   const requestBrowserPermission = async (): Promise<NotificationPermission | "unsupported"> => {
     if (typeof window === "undefined" || !("Notification" in window)) {
       return "unsupported";
     }
 
     try {
-      // Always call via window.Notification to avoid bare-global access errors
       const permission = await window.Notification.requestPermission();
       setBrowserPermissionStatus(permission);
 
-      if (permission === "granted" && typeof navigator !== "undefined" && "serviceWorker" in navigator) {
-        try {
-          const reg = await navigator.serviceWorker.register("/sw.js");
-          const sub = await reg.pushManager.getSubscription();
-          if (sub) {
-            await authFetch("/api/notifications/push", {
-              method: "POST",
-              body: JSON.stringify(sub),
-            });
-          }
-        } catch {
-          // SW registration or push subscription not available in this environment
-        }
+      if (permission === "granted") {
+        await subscribePush();
       }
       return permission;
     } catch {
@@ -327,6 +452,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         activeCheckIn,
         isLoading,
         browserPermissionStatus,
+        isPushSubscribed,
+        pushLoading,
         fetchNotifications,
         refetchPreferences: fetchPreferences,
         evaluateCheckIns,
@@ -340,6 +467,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         respondToCheckIn,
         dismissCheckIn,
         requestBrowserPermission,
+        subscribePush,
+        unsubscribePush,
+        sendTestPush,
       }}
     >
       {children}

@@ -2,8 +2,42 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUser, ApiAuthError } from "@/lib/api/requireUser";
 import { connectToDatabase } from "@/lib/mongodb";
 import { PushSubscriptionModel } from "@/models/PushSubscription";
+import { getVapidPublicKey } from "@/lib/pushService";
 
 export const runtime = "nodejs";
+
+export async function GET(request: NextRequest) {
+  try {
+    const publicKey = getVapidPublicKey();
+
+    // Optionally check if the user is authenticated and has existing active subscriptions
+    let hasActiveSubscription = false;
+    let subscriptionCount = 0;
+
+    try {
+      const user = await requireAuthenticatedUser(request);
+      if (user) {
+        await connectToDatabase();
+        subscriptionCount = await PushSubscriptionModel.countDocuments({ firebaseUid: user.uid });
+        hasActiveSubscription = subscriptionCount > 0;
+      }
+    } catch {
+      // Unauthenticated callers still receive the public key to check push readiness
+    }
+
+    return NextResponse.json({
+      data: {
+        publicKey,
+        isConfigured: Boolean(publicKey),
+        hasActiveSubscription,
+        subscriptionCount,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to retrieve push status.";
+    return NextResponse.json({ error: { message, code: "INTERNAL_ERROR" } }, { status: 500 });
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
