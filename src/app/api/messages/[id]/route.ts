@@ -74,12 +74,17 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
         const nextAssistant = await findSubsequentAssistantMessage(convId, updatedUserMsg.createdAt);
         if (nextAssistant) {
           nextAssistant.content = agentResponse.message;
+          if (schedule) {
+            nextAssistant.scheduleId = schedule.id as unknown as typeof nextAssistant.scheduleId;
+            nextAssistant.scheduleDate = schedule.date;
+            nextAssistant.scheduleSnapshot = schedule as unknown as typeof nextAssistant.scheduleSnapshot;
+          }
           await nextAssistant.save();
           assistantMessageData = {
             id: String(nextAssistant._id),
             role: "nikki",
             text: nextAssistant.content,
-            schedule: schedule ?? undefined,
+            schedule: schedule ?? (nextAssistant.scheduleSnapshot as unknown as ScheduleSummary) ?? undefined,
           };
         } else {
           const newAssistantDoc = await saveMessage({
@@ -87,6 +92,9 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
             firebaseUid: user.uid,
             role: "assistant",
             content: agentResponse.message,
+            scheduleId: schedule?.id ?? null,
+            scheduleDate: schedule?.date ?? null,
+            scheduleSnapshot: schedule ?? null,
           });
           assistantMessageData = {
             id: String(newAssistantDoc._id),

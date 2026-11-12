@@ -15,7 +15,8 @@ export type CompanionPose =
   | "celebrate"
   | "sleepy"
   | "concerned"
-  | "happy";
+  | "happy"
+  | "curious";
 
 interface CompanionCharacterProps {
   pose?: CompanionPose;
@@ -49,6 +50,8 @@ export function CompanionCharacter({ pose = "idle", className }: CompanionCharac
         return { y: [0, 3, 0], scaleY: [1, 0.97, 1] };
       case "concerned":
         return { rotate: [1, 3, 1], y: [0, -1, 0] };
+      case "curious":
+        return { rotate: [0, 4, 0], y: [0, -3, 0], scale: [1, 1.03, 1] };
       case "wave":
         return { y: [0, -3, 0], rotate: [0, 2, 0] };
       case "idle":
@@ -71,6 +74,7 @@ export function CompanionCharacter({ pose = "idle", className }: CompanionCharac
         return { duration: 1.2, repeat: Infinity, ease: "easeInOut" as const };
       case "think":
       case "concerned":
+      case "curious":
         return { duration: 2.4, repeat: Infinity, ease: "easeInOut" as const };
       case "idle":
       default:
@@ -144,6 +148,23 @@ export function CompanionCharacter({ pose = "idle", className }: CompanionCharac
                 <path d="M34 39 Q38 42 42 40" stroke="var(--text-primary)" strokeWidth="1.8" strokeLinecap="round" fill="none" />
                 <path d="M58 40 Q62 42 66 39" stroke="var(--text-primary)" strokeWidth="1.8" strokeLinecap="round" fill="none" />
                 <path d="M42 62 Q50 57 58 62" stroke="var(--text-primary)" strokeWidth="2.2" strokeLinecap="round" fill="none" />
+              </>
+            ) : pose === "curious" ? (
+              // Inquisitive, attentive curious face with wide sparkling eyes and cute smile
+              <>
+                <motion.g
+                  animate={prefersReducedMotion ? {} : { scaleY: [1, 1, 0.08, 1, 1] }}
+                  transition={{ duration: 3.8, repeat: Infinity, times: [0, 0.9, 0.93, 0.96, 1] }}
+                  style={{ transformOrigin: "50px 46px" }}
+                >
+                  <circle cx="38" cy="45" r="4.5" fill="var(--text-primary)" />
+                  <circle cx="40" cy="43.5" r="1.3" fill="white" />
+                  <circle cx="62" cy="45" r="4.5" fill="var(--text-primary)" />
+                  <circle cx="64" cy="43.5" r="1.3" fill="white" />
+                </motion.g>
+                <path d="M35 38 Q38 35 42 37" stroke="var(--text-primary)" strokeWidth="1.8" strokeLinecap="round" fill="none" />
+                <path d="M58 37 Q62 35 65 38" stroke="var(--text-primary)" strokeWidth="1.8" strokeLinecap="round" fill="none" />
+                <path d="M44 60 Q50 65 56 60" stroke="var(--text-primary)" strokeWidth="2.2" strokeLinecap="round" fill="none" />
               </>
             ) : (
               // Idle / Wave / Think with natural blinking

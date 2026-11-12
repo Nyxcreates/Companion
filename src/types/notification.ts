@@ -63,7 +63,16 @@ export interface CheckInTrigger {
     | "evening_checkin";
   message: string;
   subText?: string;
-  characterPose: "greet" | "idle" | "point" | "ponder" | "celebrate";
+  characterPose:
+    | "greet"
+    | "idle"
+    | "point"
+    | "ponder"
+    | "celebrate"
+    | "sleepy"
+    | "concerned"
+    | "curious"
+    | "happy";
   characterGaze: "center" | "left" | "right" | "up";
   actions: {
     label: string;

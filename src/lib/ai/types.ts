@@ -9,6 +9,7 @@ import type { GoalSummary } from "@/types/goal";
 import type { TaskSummary } from "@/types/task";
 import type { MemoryType } from "@/lib/memory/types";
 import type { CurrentTimeInfo } from "@/lib/time/currentTime";
+import type { ScheduleSummary } from "@/types/schedule";
 
 export type AgentIntent =
   | "conversation"
@@ -94,6 +95,10 @@ export interface AgentContext {
   relevantMemories: AgentMemoryItem[];
   /** Authoritative runtime clock and timezone. */
   currentTimeInfo: CurrentTimeInfo;
+  /** Saved timetable for today (if created). */
+  todaySchedule?: ScheduleSummary | null;
+  /** Saved timetable for tomorrow (if created). */
+  tomorrowSchedule?: ScheduleSummary | null;
   /** Active living world environment theme if selected. */
   livingEnvironment?: string | null;
 }

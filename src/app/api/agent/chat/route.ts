@@ -25,6 +25,7 @@ import { deriveTitleFromMessage } from "@/lib/conversation/titles";
 import { generateAndPersistSchedule, resolveTargetDate } from "@/lib/schedule/generate";
 import { deleteSchedule, getSchedule } from "@/services/scheduleService";
 import type { ScheduleSummary } from "@/types/schedule";
+import type { AgentIntent } from "@/lib/ai/types";
 
 export const runtime = "nodejs";
 
@@ -94,11 +95,52 @@ export async function POST(request: NextRequest) {
     // eslint-disable-next-line no-console
     console.log(`[Companion] Gemini request completed (intent: ${agentResponse.intent})`);
 
+    // Structured timetable generation & deletion handled BEFORE message persistence
+    // so schedule artifacts are atomically bound to the assistant message in MongoDB.
+    let schedule: ScheduleSummary | null = null;
+    let scheduleDeleted: string | null = null;
+
+    if (agentResponse.intent === "timetable_delete") {
+      try {
+        const targetDate = resolveTargetDate(data.message, data.timezone ?? "UTC", recentHistory);
+        const deleted = await deleteSchedule(user.uid, targetDate);
+        if (deleted) {
+          scheduleDeleted = targetDate;
+        }
+      } catch (deleteError) {
+        // eslint-disable-next-line no-console
+        console.error("[Companion] Schedule deletion failed (non-fatal to chat):", deleteError);
+      }
+    } else if (agentResponse.intent === "timetable_request" || agentResponse.intent === "reschedule_request") {
+      try {
+        schedule = await generateAndPersistSchedule(user.uid, data.message, recentHistory, data.timezone);
+      } catch (scheduleError) {
+        // eslint-disable-next-line no-console
+        console.error("[Companion] Schedule generation failed (non-fatal to chat):", scheduleError);
+      }
+    } else if (agentResponse.intent === "timetable_save") {
+      try {
+        const targetDate = resolveTargetDate(data.message, data.timezone ?? "UTC", recentHistory);
+        const existing = await getSchedule(user.uid, targetDate);
+        if (existing) {
+          schedule = existing;
+        } else {
+          schedule = await generateAndPersistSchedule(user.uid, data.message, recentHistory, data.timezone);
+        }
+      } catch (saveError) {
+        // eslint-disable-next-line no-console
+        console.error("[Companion] Timetable save failed (non-fatal to chat):", saveError);
+      }
+    }
+
     const assistantMessageDoc = await saveMessage({
       conversationId,
       firebaseUid: user.uid,
       role: "assistant",
       content: agentResponse.message,
+      scheduleId: schedule?.id ?? null,
+      scheduleDate: schedule?.date ?? null,
+      scheduleSnapshot: schedule ?? null,
     });
 
     // Emotion persistence: best-effort, never fatal to the chat turn.
@@ -156,56 +198,7 @@ export async function POST(request: NextRequest) {
       console.error("[Companion] Memory candidate processing failed (non-fatal):", memoryError);
     }
 
-    // Structured timetable generation & deletion:
-    let schedule: ScheduleSummary | null = null;
-    let scheduleDeleted: string | null = null;
-
-    if (agentResponse.intent === "timetable_delete") {
-      try {
-        const targetDate = resolveTargetDate(data.message, data.timezone ?? "UTC");
-        const deleted = await deleteSchedule(user.uid, targetDate);
-        if (deleted) {
-          scheduleDeleted = targetDate;
-        }
-      } catch (deleteError) {
-        // eslint-disable-next-line no-console
-        console.error("[Companion] Schedule deletion failed (non-fatal to chat):", deleteError);
-      }
-    } else if (agentResponse.intent === "timetable_request" || agentResponse.intent === "reschedule_request") {
-      try {
-        schedule = await generateAndPersistSchedule(user.uid, data.message, recentHistory, data.timezone);
-      } catch (scheduleError) {
-        // eslint-disable-next-line no-console
-        console.error("[Companion] Schedule generation failed (non-fatal to chat):", scheduleError);
-      }
-    } else if (agentResponse.intent === "timetable_save") {
-      try {
-        const targetDate = resolveTargetDate(data.message, data.timezone ?? "UTC");
-        const existing = await getSchedule(user.uid, targetDate);
-        if (existing) {
-          schedule = existing;
-        } else {
-          schedule = await generateAndPersistSchedule(user.uid, data.message, recentHistory, data.timezone);
-        }
-      } catch (saveError) {
-        // eslint-disable-next-line no-console
-        console.error("[Companion] Timetable save failed (non-fatal to chat):", saveError);
-      }
-    }
-
-    // Persist timetable relationship to this message artifact so it survives refresh & history
-    if (schedule && assistantMessageDoc?._id) {
-      try {
-        await updateMessageSchedule(String(assistantMessageDoc._id), {
-          scheduleId: schedule.id,
-          scheduleDate: schedule.date,
-          scheduleSnapshot: schedule,
-        });
-      } catch (updateError) {
-        // eslint-disable-next-line no-console
-        console.error("[Companion] Failed to attach schedule to message:", updateError);
-      }
-    }
+    const companionSignal = deriveCompanionSignal(agentResponse.intent, data.message);
 
     return NextResponse.json({
       data: {
@@ -216,11 +209,40 @@ export async function POST(request: NextRequest) {
         conversationId,
         schedule,
         scheduleDeleted,
+        companionSignal,
       },
     });
   } catch (error) {
     return handleAgentError(error);
   }
+}
+
+interface CompanionSignal {
+  state: "leaving" | "college" | "sleeping" | "break" | "returned" | "present";
+  pose: "wave" | "sleepy" | "celebrate" | "sit" | "happy" | "idle";
+}
+
+function deriveCompanionSignal(intent: AgentIntent, userMessage: string): CompanionSignal | null {
+  const lower = userMessage.toLowerCase();
+  if (intent === "farewell") {
+    if (/sleep|goodnight|bed\b|night\b|rest\b/.test(lower)) {
+      return { state: "sleeping", pose: "sleepy" };
+    }
+    if (/college|class|lecture|uni\b|campus|school/.test(lower)) {
+      return { state: "college", pose: "wave" };
+    }
+    if (/break|eat|lunch|snack|dinner|stepping away|away for a while|brb/.test(lower)) {
+      return { state: "break", pose: "sit" };
+    }
+    return { state: "leaving", pose: "wave" };
+  }
+  if (intent === "welcome_back") {
+    if (/college|class|lecture|uni|campus|school/.test(lower)) {
+      return { state: "returned", pose: "celebrate" };
+    }
+    return { state: "returned", pose: "happy" };
+  }
+  return null;
 }
 
 function handleAgentError(error: unknown): Response {

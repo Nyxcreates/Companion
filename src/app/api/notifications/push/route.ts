@@ -28,7 +28,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       data: {
         publicKey,
-        isConfigured: Boolean(publicKey),
+        isConfigured: Boolean(publicKey && process.env.VAPID_PRIVATE_KEY),
+        serverKeysConfigured: Boolean(process.env.VAPID_PRIVATE_KEY),
         hasActiveSubscription,
         subscriptionCount,
       },

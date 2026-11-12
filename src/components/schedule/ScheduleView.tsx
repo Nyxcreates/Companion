@@ -13,7 +13,10 @@ import type { ScheduleSummary } from "@/types/schedule";
 function dateStr(offsetDays: number): string {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().slice(0, 10);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 /** The timetable (today + tomorrow). Moved out of the old /timetable page so it can live inside Plan; adds per-day delete. */

@@ -99,16 +99,13 @@ export function LivingWorldStoryExperience() {
   const scene = DISCOVERY_SCENES[currentSceneIndex];
   const isFinalScene = currentSceneIndex === DISCOVERY_SCENES.length - 1;
 
-  // Auto-redirect returning users if they completed the story and did not request replay
+  // Auto-redirect authenticated returning users directly to their companion sanctuary
   useEffect(() => {
     if (isReplayMode) return;
     if (authLoading || profileLoading) return;
 
-    const localCompleted = typeof window !== "undefined" && localStorage.getItem(STORAGE_KEY) === "true";
-    const profileCompleted = profile?.introCompleted ?? false;
-
-    if (firebaseUser && (localCompleted || profileCompleted)) {
-      if (profile?.onboardingCompleted) {
+    if (firebaseUser) {
+      if (profile?.onboardingCompleted !== false) {
         router.replace("/dashboard");
       } else {
         router.replace("/onboarding");

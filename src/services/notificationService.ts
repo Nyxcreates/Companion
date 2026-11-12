@@ -390,9 +390,11 @@ export async function evaluateProactiveContext(
   }
   const currentMinutes = localHour * 60 + localMinute;
 
+  // Retrieve today's timetable (used for proactive reminders and morning check-in)
+  const todaySchedule = await ScheduleModel.findOne({ firebaseUid, date: todayStr });
+
   // 0. Proactive Timetable & Daily Context Interaction Engine
   if (isCatEnabled("timetable_reminder") && !inQuietHours) {
-    const todaySchedule = await ScheduleModel.findOne({ firebaseUid, date: todayStr });
     if (todaySchedule && todaySchedule.items && todaySchedule.items.length > 0) {
       for (const item of todaySchedule.items) {
         if (!item.start || !item.end) continue;
@@ -579,89 +581,132 @@ export async function evaluateProactiveContext(
           }
         }
       }
+    }
+  }
 
-      // E. Morning Overview (07:00 to 09:30)
-      if (localHour >= 7 && localHour < 10 && !activeCheckIn) {
-        const morningNotif = await NotificationModel.findOne({
+    // E. Morning Overview (06:00 to 11:30)
+    if (localHour >= 6 && localHour < 12 && !activeCheckIn) {
+      const morningNotif = await NotificationModel.findOne({
+        firebaseUid,
+        category: "timetable_reminder",
+        "metadata.type": "morning_overview",
+        createdAt: { $gte: new Date(now.getTime() - 10 * 60 * 60 * 1000) },
+      });
+
+      if (!morningNotif) {
+        const count = todaySchedule?.items?.length ?? 0;
+        const morningMsg = count > 0
+          ? `Good morninggg! You're up! You have ${count} ${count === 1 ? "activity" : "activities"} planned on your timetable.`
+          : "GOOD MORNINGGG! ☀️ You're up! Ready to make today a good one? Shall we plan your day together?";
+
+        await createNotification({
           firebaseUid,
           category: "timetable_reminder",
-          "metadata.type": "morning_overview",
-          createdAt: { $gte: new Date(now.getTime() - 10 * 60 * 60 * 1000) },
+          title: "Good Morning!",
+          body: morningMsg,
+          actionUrl: "/plan?tab=schedule",
+          actionLabel: count > 0 ? "Open Schedule" : "Plan Today",
+          metadata: { type: "morning_overview", date: todayStr },
         });
+        newNotificationsCount++;
 
-        if (!morningNotif) {
-          const count = todaySchedule.items.length;
-          const morningMsg = `Good morninggg! You're up early today! You have ${count} ${count === 1 ? "activity" : "activities"} planned on your timetable.`;
-          await createNotification({
-            firebaseUid,
-            category: "timetable_reminder",
-            title: "Good Morning!",
-            body: morningMsg,
-            actionUrl: "/plan?tab=schedule",
-            actionLabel: "Open Schedule",
-            metadata: { type: "morning_overview", date: todayStr },
-          });
-          newNotificationsCount++;
-
-          if (prefs.proactiveEnabled) {
-            activeCheckIn = {
-              id: `morning_${todayStr}`,
-              triggerType: "morning_checkin",
-              message: morningMsg,
-              subText: "Have you had breakfast and checked what's ahead today?",
-              characterPose: "greet",
-              characterGaze: "center",
-              actions: [
-                { label: "View Today's Plan", action: "accept", payload: "/plan?tab=schedule", variant: "primary" },
-                { label: "Talk to Nikki", action: "talk", variant: "secondary" },
-              ],
-              interventionType: "schedule",
-            };
-          }
-        }
-      }
-
-      // F. Evening Reflection (18:00 to 21:30)
-      if (localHour >= 18 && localHour < 22 && !activeCheckIn) {
-        const eveningNotif = await NotificationModel.findOne({
-          firebaseUid,
-          category: "nikki_supportive",
-          "metadata.type": "evening_reflection",
-          createdAt: { $gte: new Date(now.getTime() - 8 * 60 * 60 * 1000) },
-        });
-
-        if (!eveningNotif) {
-          const eveningMsg = "How did today go? Did everything work out with your plan?";
-          await createNotification({
-            firebaseUid,
-            category: "nikki_supportive",
-            title: "Evening Check-in",
-            body: eveningMsg,
-            actionUrl: "/dashboard",
-            actionLabel: "Tell Nikki",
-            metadata: { type: "evening_reflection", date: todayStr },
-          });
-          newNotificationsCount++;
-
-          if (prefs.proactiveEnabled) {
-            activeCheckIn = {
-              id: `evening_${todayStr}`,
-              triggerType: "evening_checkin",
-              message: eveningMsg,
-              subText: "Whatever happened, you did your best today.",
-              characterPose: "ponder",
-              characterGaze: "center",
-              actions: [
-                { label: "Reflect with Nikki", action: "talk", variant: "primary" },
-                { label: "Check Tomorrow", action: "accept", payload: "/plan?tab=schedule", variant: "secondary" },
-              ],
-              interventionType: "chat",
-            };
-          }
+        if (prefs.proactiveEnabled) {
+          activeCheckIn = {
+            id: `morning_${todayStr}`,
+            triggerType: "morning_checkin",
+            message: morningMsg,
+            subText: count > 0 ? "Have you had breakfast and checked what's ahead today?" : "Take your time, grab some breakfast, and let's conquer the day.",
+            characterPose: "greet",
+            characterGaze: "center",
+            actions: [
+              { label: count > 0 ? "View Today's Plan" : "Plan Today", action: "accept", payload: "/plan?tab=schedule", variant: "primary" },
+              { label: "Talk to Nikki", action: "talk", variant: "secondary" },
+            ],
+            interventionType: "schedule",
+          };
         }
       }
     }
-  }
+
+    // F. Evening Reflection (18:00 to 22:30)
+    if (localHour >= 18 && localHour < 23 && !activeCheckIn) {
+      const eveningNotif = await NotificationModel.findOne({
+        firebaseUid,
+        category: "nikki_supportive",
+        "metadata.type": "evening_reflection",
+        createdAt: { $gte: new Date(now.getTime() - 8 * 60 * 60 * 1000) },
+      });
+
+      if (!eveningNotif) {
+        const eveningMsg = "How did today go? Did everything work out with your plan?";
+        await createNotification({
+          firebaseUid,
+          category: "nikki_supportive",
+          title: "Evening Check-in",
+          body: eveningMsg,
+          actionUrl: "/dashboard",
+          actionLabel: "Tell Nikki",
+          metadata: { type: "evening_reflection", date: todayStr },
+        });
+        newNotificationsCount++;
+
+        if (prefs.proactiveEnabled) {
+          activeCheckIn = {
+            id: `evening_${todayStr}`,
+            triggerType: "evening_checkin",
+            message: eveningMsg,
+            subText: "Whatever happened today, you showed up and gave it your all.",
+            characterPose: "ponder",
+            characterGaze: "center",
+            actions: [
+              { label: "Reflect with Nikki", action: "talk", variant: "primary" },
+              { label: "Check Tomorrow", action: "accept", payload: "/plan?tab=schedule", variant: "secondary" },
+            ],
+            interventionType: "chat",
+          };
+        }
+      }
+    }
+
+    // G. Late Night Check-in (22:30 to 05:00)
+    if ((localHour >= 23 || localHour < 5) && !activeCheckIn) {
+      const lateNotif = await NotificationModel.findOne({
+        firebaseUid,
+        category: "sleep_reminder",
+        "metadata.type": "late_night_winddown",
+        createdAt: { $gte: new Date(now.getTime() - 7 * 60 * 60 * 1000) },
+      });
+
+      if (!lateNotif) {
+        const lateMsg = "Still awake? Hehe. How did today go? Don't stay up too late, moon. 🌙";
+        await createNotification({
+          firebaseUid,
+          category: "sleep_reminder",
+          title: "Late Night Check-in",
+          body: lateMsg,
+          actionUrl: "/dashboard",
+          actionLabel: "Chat with Nikki",
+          metadata: { type: "late_night_winddown", date: todayStr },
+        });
+        newNotificationsCount++;
+
+        if (prefs.proactiveEnabled) {
+          activeCheckIn = {
+            id: `latenight_${todayStr}`,
+            triggerType: "late_night",
+            message: lateMsg,
+            subText: "Rest is when everything you did today integrates. Sleep well!",
+            characterPose: "sleepy",
+            characterGaze: "center",
+            actions: [
+              { label: "Talk to Nikki", action: "talk", variant: "primary" },
+              { label: "Goodnight Nikki", action: "dismiss", variant: "ghost" },
+            ],
+            interventionType: "chat",
+          };
+        }
+      }
+    }
 
   // 1. Task Reminders: Due within next 24 hours or overdue
   if (isCatEnabled("task_reminder") && !inQuietHours) {

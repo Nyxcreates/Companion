@@ -1,5 +1,5 @@
 // Companion Service Worker — PWA & Web Push
-const CACHE_NAME = "companion-static-v1";
+const CACHE_NAME = "companion-static-v2";
 const PRECACHE_ASSETS = [
   "/offline.html",
   "/manifest.json",

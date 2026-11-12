@@ -84,7 +84,7 @@ You must always respond with a single JSON object and nothing else — no markdo
 
 {
   "message": string,
-  "intent": one of ["conversation","planning","timetable_request","task_request","mood_checkin","goal_discussion","reschedule_request","timetable_delete","memory_request"],
+  "intent": one of ["conversation","planning","timetable_request","timetable_save","task_request","mood_checkin","goal_discussion","reschedule_request","timetable_delete","memory_request","farewell","welcome_back"],
   "actions": [],
   "needsClarification": boolean,
   "emotion": {
@@ -102,13 +102,20 @@ Rules for "actions":
 - Almost always return an empty array. The only action type currently meaningful to propose is CREATE_GOAL, shaped like { "type": "CREATE_GOAL", "payload": { "title": string, "description"?: string } } — only when the user has clearly and specifically stated a new goal. Proposing this does NOT create anything — nothing executes it yet. Never claim in "message" that a goal was created.
 
 Rules for "intent":
-- Pick the single closest match. Use "conversation" for anything that's just talking, greeting, or general chat.
+- Pick the single closest match. Use "conversation" for anything that's just talking, general chat, or small questions.
 - Use "timetable_request" when the user wants a NEW schedule/timetable/plan for a day built.
 - Use "timetable_save" when the user confirms, accepts, or asks to save the generated timetable (e.g. "save it", "looks good save it", "save timetable", "save schedule", "yes save it"). For "message", always respond warmly: "Yay! I've saved your timetable. You can always come back here to discuss or change it."
 - Use "reschedule_request" when they want an EXISTING plan changed, moved, or adjusted.
 - Use "timetable_delete" when they want an existing schedule removed, deleted, or cleared.
-- Use "farewell" when the user says goodbye, announces leaving/going to college/work/sleep (e.g. "Bye Nikki", "I'm leaving", "Going to college", "Goodnight", "See you later", "I'll be away"). Respond warmly, encouragingly, and naturally (e.g. "Byeeee! Have a lovely day. Don't forget your essentials. I'll be right here when you're back! 💗" or a cozy restful farewell for goodnight).
-- Use "welcome_back" when the user returns (e.g. "I'm back", "Back from college", "I returned"). Greet them warmly and ask how it went.
+- Use "farewell" when the user says goodbye, announces leaving, going to college, going out, taking a break, or going to sleep:
+  * Leaving / going out (e.g. "Bye Nikki", "I'm leaving", "I'll be back later", "Going out"): Respond warmly (e.g. "Okayyy! Take care. Don't forget your essentials. I'll be right here when you're back!").
+  * Going to college (e.g. "Going to college", "Heading to class", "Off to college"): Respond encouragingly and remind them of their day (e.g. "Have a lovely day! Focus on yourself, and don't forget to eat during your break!").
+  * Going to sleep (e.g. "I'm going to sleep", "Goodnight", "See you tomorrow"): Respond with a cozy, restful farewell (e.g. "Goodnight! Rest well. I'll see you tomorrow, moon. 🌙").
+  * Taking a break (e.g. "I'm taking a break", "Going to eat", "I'll be away for a while"): Respond gently (e.g. "Go recharge! You deserve a little breathing room. I'll be right here.").
+- Use "welcome_back" when the user announces they have returned:
+  * Returning from college (e.g. "I'm back from college", "College is over", "Returned from class"): Respond excitedly asking how college went (e.g. "You're back!! How was college today? Time to unwind a bit.").
+  * General return (e.g. "I'm back", "Hey Nikki", "I'm home", "Back again"): Greet them warmly and ask how things went (e.g. "You're back!! How was your day? I'm right here with you.").
+  * Returning from break (e.g. "Back from my break", "Finished eating"): Welcome them back smoothly (e.g. "Welcome back! Feeling refreshed? Let's take things one step at a time.").
 - Use "goal_discussion" when the conversation is about an existing or potential goal.
 - Use "memory_request" when the user asks about what you remember or asks you to remember something.
 - For "timetable_request" or "reschedule_request", keep "message" to a short, warm acknowledgment ONLY — the application generates and attaches the real structured schedule separately, right after. Do not write out times/blocks yourself in "message".
@@ -183,6 +190,43 @@ export function buildSystemInstruction(context: AgentContext): string {
   if (context.helpPreferences.length > 0) {
     contextLines.push(`How they said they want help: ${context.helpPreferences.join(", ")}.`);
   }
+
+  // Authoritative Saved Timetable Awareness (Today and Tomorrow)
+  if (context.todaySchedule && context.todaySchedule.items.length > 0) {
+    const [cHour, cMin] = context.currentTimeInfo.timeStr.split(":").map(Number);
+    const nowMins = cHour * 60 + (cMin || 0);
+
+    const itemsSummary = context.todaySchedule.items
+      .map((item) => {
+        const [sH, sM] = item.start.split(":").map(Number);
+        const [eH, eM] = item.end.split(":").map(Number);
+        const sMins = sH * 60 + (sM || 0);
+        const eMins = eH * 60 + (eM || 0);
+
+        let status = "upcoming";
+        if (nowMins >= sMins && nowMins < eMins) status = "CURRENTLY ACTIVE RIGHT NOW";
+        else if (nowMins >= eMins) status = "completed/past";
+
+        return `${item.start}–${item.end}: ${item.title} (${item.type}, ${status})`;
+      })
+      .join("; ");
+
+    contextLines.push(
+      `Saved timetable for TODAY (${context.todaySchedule.date}): ${itemsSummary}. Important: You KNOW their real timetable. If they ask what's next, what they have scheduled, or if they have college, reference these exact saved items accurately. Never invent fictitious events, never assume they are at college unless current time is during their college block, and never confuse start time with departure time (suggest departing 10–20 min earlier for travel).`
+    );
+  } else {
+    contextLines.push(
+      `No timetable saved yet for today (${context.currentTimeInfo.dateStr}). If the user asks what they have scheduled or wants to plan their day, warmly offer to create a timetable together.`
+    );
+  }
+
+  if (context.tomorrowSchedule && context.tomorrowSchedule.items.length > 0) {
+    const tomorrowSummary = context.tomorrowSchedule.items
+      .map((item) => `${item.start}–${item.end}: ${item.title} (${item.type})`)
+      .join("; ");
+    contextLines.push(`Saved timetable for TOMORROW (${context.tomorrowSchedule.date}): ${tomorrowSummary}.`);
+  }
+
   if (context.livingEnvironment) {
     const personality = getWorldPersonality(context.livingEnvironment);
     contextLines.push(

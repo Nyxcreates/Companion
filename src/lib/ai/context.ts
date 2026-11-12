@@ -3,7 +3,8 @@ import { UserModel } from "@/models/User";
 import { listActiveGoalsForContext } from "@/services/goalService";
 import { listTasks } from "@/services/taskService";
 import { loadRelevantMemories } from "@/services/memoryService";
-import { resolveUserTimezone, getCurrentTimeInfo } from "@/lib/time/currentTime";
+import { getSchedule } from "@/services/scheduleService";
+import { resolveUserTimezone, getCurrentTimeInfo, getTodayDateStr, getTomorrowDateStr } from "@/lib/time/currentTime";
 import { AgentContextError } from "./errors";
 import type { AgentContext } from "./types";
 
@@ -18,34 +19,41 @@ export async function buildAgentContext(
   try {
     await connectToDatabase();
 
-    const [doc, activeGoals, pendingTasks, inProgressTasks, relevantMemories] = await Promise.all([
-      UserModel.findOne({ firebaseUid }),
-      listActiveGoalsForContext(firebaseUid),
-      listTasks(firebaseUid, { status: "PENDING" }),
-      listTasks(firebaseUid, { status: "IN_PROGRESS" }),
-      loadRelevantMemories(firebaseUid),
-    ]);
-
-    const tz = resolveUserTimezone(clientTimezone, doc?.timezone);
+    const userDoc = await UserModel.findOne({ firebaseUid });
+    const tz = resolveUserTimezone(clientTimezone, userDoc?.timezone);
     const currentTimeInfo = getCurrentTimeInfo(tz);
+    const todayDateStr = getTodayDateStr(tz);
+    const tomorrowDateStr = getTomorrowDateStr(tz);
+
+    const [activeGoals, pendingTasks, inProgressTasks, relevantMemories, todaySchedule, tomorrowSchedule] =
+      await Promise.all([
+        listActiveGoalsForContext(firebaseUid),
+        listTasks(firebaseUid, { status: "PENDING" }),
+        listTasks(firebaseUid, { status: "IN_PROGRESS" }),
+        loadRelevantMemories(firebaseUid),
+        getSchedule(firebaseUid, todayDateStr).catch(() => null),
+        getSchedule(firebaseUid, tomorrowDateStr).catch(() => null),
+      ]);
 
     return {
-      displayName: doc?.displayName ?? null,
-      companionName: doc?.companionName ?? null,
-      goals: doc?.goals ?? [],
-      customGoal: doc?.customGoal ?? null,
+      displayName: userDoc?.displayName ?? null,
+      companionName: userDoc?.companionName ?? null,
+      goals: userDoc?.goals ?? [],
+      customGoal: userDoc?.customGoal ?? null,
       dailyRhythm: {
-        wakeTime: doc?.dailyRhythm?.wakeTime ?? null,
-        sleepTime: doc?.dailyRhythm?.sleepTime ?? null,
-        focusPeriods: doc?.dailyRhythm?.focusPeriods ?? [],
-        commitments: doc?.dailyRhythm?.commitments ?? null,
+        wakeTime: userDoc?.dailyRhythm?.wakeTime ?? null,
+        sleepTime: userDoc?.dailyRhythm?.sleepTime ?? null,
+        focusPeriods: userDoc?.dailyRhythm?.focusPeriods ?? [],
+        commitments: userDoc?.dailyRhythm?.commitments ?? null,
       },
-      helpPreferences: doc?.helpPreferences ?? [],
+      helpPreferences: userDoc?.helpPreferences ?? [],
       activeGoals,
       activeTasks: [...inProgressTasks, ...pendingTasks],
       relevantMemories,
       currentTimeInfo,
-      livingEnvironment: doc?.livingEnvironment ?? null,
+      todaySchedule,
+      tomorrowSchedule,
+      livingEnvironment: userDoc?.livingEnvironment ?? null,
     };
   } catch (error) {
     throw new AgentContextError(error);

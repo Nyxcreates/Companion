@@ -42,6 +42,7 @@ interface ChatResponseData {
   conversationId: string;
   schedule: ScheduleSummary | null;
   scheduleDeleted?: string | null;
+  companionSignal?: { state: string; pose: string } | null;
 }
 
 interface EditMessageResponseData {
@@ -197,6 +198,12 @@ export function CompanionChatPanel({
     setIsSending(true);
 
     try {
+      localStorage.setItem("companion:last-chat-message-time", Date.now().toString());
+    } catch {
+      // safe fallback
+    }
+
+    try {
       const timezone = getBrowserTimezone();
       const res = await authFetch("/api/agent/chat", {
         method: "POST",
@@ -237,6 +244,28 @@ export function CompanionChatPanel({
           },
         ];
       });
+
+      // Update companion state for goodbye, return, or break signals
+      if (agentResponse.companionSignal) {
+        try {
+          if (agentResponse.companionSignal.state === "returned") {
+            localStorage.removeItem("companion:user-state");
+          } else {
+            localStorage.setItem(
+              "companion:user-state",
+              JSON.stringify({
+                ...agentResponse.companionSignal,
+                timestamp: Date.now(),
+              })
+            );
+          }
+          window.dispatchEvent(
+            new CustomEvent("companion:state-change", { detail: agentResponse.companionSignal })
+          );
+        } catch {
+          // safe fallback
+        }
+      }
     } catch (err) {
       const msg =
         err instanceof AuthFetchError || err instanceof Error
@@ -400,7 +429,67 @@ export function CompanionChatPanel({
         )}
 
         {!isLoadingHistory && turns.length === 0 && (
-          <p className="text-center text-sm text-ink-muted">{emptyStateText}</p>
+          <div className="my-auto flex flex-col items-center justify-center gap-4 py-8 text-center">
+            <div className="relative h-20 w-20">
+              <CompanionCharacter
+                pose={new Date().getHours() >= 23 || new Date().getHours() < 5 ? "sleepy" : "wave"}
+                className="h-full w-full"
+              />
+            </div>
+            <div className="max-w-md space-y-1.5 px-4">
+              <h3 className="font-display text-base font-semibold text-white">
+                {new Date().getHours() < 12
+                  ? "GOOD MORNINGGG! ☀️ Ready to make today a good one?"
+                  : new Date().getHours() < 17
+                    ? `Heyyy! How is your afternoon going, moon?`
+                    : new Date().getHours() < 22
+                      ? "Good eveninggg! How did today turn out?"
+                      : "Still awake? Hehe. How did today go? 🌙"}
+              </h3>
+              <p className="text-xs text-ink-muted leading-relaxed">
+                I&apos;m right here with you. Tell me what&apos;s on your mind, plan your timetable, or ask me anything!
+              </p>
+            </div>
+
+            {/* Quick interactive conversation starters */}
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-2 max-w-lg">
+              <button
+                type="button"
+                onClick={() => handleSend("Plan my timetable for today")}
+                className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1.5 text-xs text-cyan-300 transition-all hover:bg-cyan-500/20 hover:border-cyan-400"
+              >
+                📅 Plan my timetable for today
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSend("What do I have next on my schedule?")}
+                className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-ink-primary transition-all hover:bg-white/10"
+              >
+                ⏰ What&apos;s next on my schedule?
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSend("Bye Nikki, going to college!")}
+                className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-ink-primary transition-all hover:bg-white/10"
+              >
+                🎒 Going to college
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSend("I'm back from college!")}
+                className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-ink-primary transition-all hover:bg-white/10"
+              >
+                ✨ I&apos;m back!
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSend("Goodnight Nikki 🌙")}
+                className="rounded-full border border-indigo-400/30 bg-indigo-500/10 px-3 py-1.5 text-xs text-indigo-300 transition-all hover:bg-indigo-500/20"
+              >
+                🌙 Goodnight Nikki
+              </button>
+            </div>
+          </div>
         )}
 
         {!isLoadingHistory && (

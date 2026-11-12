@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Download,
   Smartphone,
@@ -8,17 +8,34 @@ import {
   CheckCircle2,
   HardDrive,
   Info,
-  ExternalLink,
+  Apple,
   Sparkles,
+  HelpCircle,
+  Bell,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { usePwa } from "@/context/PwaContext";
 
+type DevicePlatform = "android" | "ios" | "desktop";
+
 export function AppInfoSection() {
   const { isInstallable, isInstalled, installApp, swRegistered } = usePwa();
   const [installing, setInstalling] = useState(false);
-  const [activeTab, setActiveTab] = useState<"android" | "laptop">("android");
+  const [activeTab, setActiveTab] = useState<DevicePlatform>("android");
+
+  // Detect user platform for smart default tab selection
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const ua = navigator.userAgent.toLowerCase();
+    if (/iphone|ipad|ipod/.test(ua)) {
+      setActiveTab("ios");
+    } else if (/android/.test(ua)) {
+      setActiveTab("android");
+    } else {
+      setActiveTab("desktop");
+    }
+  }, []);
 
   const handleInstallClick = async () => {
     setInstalling(true);
@@ -35,10 +52,10 @@ export function AppInfoSection() {
         <div>
           <h2 className="font-display text-lg font-semibold text-ink-primary flex items-center gap-2">
             <Download className="h-5 w-5 text-cyan-400" />
-            App &amp; Install Information
+            Install Companion on your phone
           </h2>
           <p className="text-xs text-ink-muted mt-0.5">
-            Install Companion as an actual app on your Oppo A96 Android phone and Windows laptop.
+            Add Companion as a standalone application on your Android phone, iPhone, iPad, or computer.
           </p>
         </div>
         <div>
@@ -69,7 +86,7 @@ export function AppInfoSection() {
               Install Companion Now
             </h3>
             <p className="text-xs text-ink-muted mt-0.5">
-              Adds Companion directly to your home screen or desktop taskbar without browser borders.
+              Instantly installs Companion onto your home screen or desktop without browser address bars or tabs.
             </p>
           </div>
           <Button
@@ -114,8 +131,8 @@ export function AppInfoSection() {
       </div>
 
       {/* Step-by-Step Installation Guides */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-ink-primary">
             Installation Guide by Device
           </h3>
@@ -123,54 +140,100 @@ export function AppInfoSection() {
             <button
               type="button"
               onClick={() => setActiveTab("android")}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors ${
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-colors ${
                 activeTab === "android"
                   ? "bg-cyan-500/20 text-cyan-300 font-medium"
                   : "text-ink-muted hover:text-white"
               }`}
             >
               <Smartphone className="h-3.5 w-3.5" />
-              <span>Oppo A96 (Android)</span>
+              <span>Android</span>
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("laptop")}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-colors ${
-                activeTab === "laptop"
+              onClick={() => setActiveTab("ios")}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-colors ${
+                activeTab === "ios"
+                  ? "bg-cyan-500/20 text-cyan-300 font-medium"
+                  : "text-ink-muted hover:text-white"
+              }`}
+            >
+              <Apple className="h-3.5 w-3.5" />
+              <span>iPhone / iPad</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("desktop")}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition-colors ${
+                activeTab === "desktop"
                   ? "bg-cyan-500/20 text-cyan-300 font-medium"
                   : "text-ink-muted hover:text-white"
               }`}
             >
               <Laptop className="h-3.5 w-3.5" />
-              <span>Laptop (Chrome / Edge)</span>
+              <span>Desktop / Laptop</span>
             </button>
           </div>
         </div>
 
-        {activeTab === "android" ? (
+        {activeTab === "android" && (
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-xs space-y-3">
-            <p className="font-medium text-white">How to install Companion on your Oppo A96:</p>
+            <p className="font-medium text-white">How to install Companion on Android (Chrome, Edge, Samsung Internet):</p>
             <ol className="list-decimal list-inside space-y-2 text-ink-muted leading-relaxed">
               <li>
-                Open <span className="text-cyan-300">Chrome</span> or your preferred browser on your Oppo A96 and navigate to your Companion website.
+                Open <span className="text-cyan-300">Google Chrome</span>, <span className="text-cyan-300">Microsoft Edge</span>, or your preferred browser on your phone.
               </li>
               <li>
-                Tap the <strong className="text-white">Three dots (⋮)</strong> menu in the top-right corner of Chrome.
+                Navigate to your Companion application website.
+              </li>
+              <li>
+                Tap the <strong className="text-white">Three dots (⋮)</strong> menu button in the top-right or bottom-right corner.
               </li>
               <li>
                 Tap <strong className="text-white">&ldquo;Install app&rdquo;</strong> (or &ldquo;Add to Home screen&rdquo;).
               </li>
               <li>
-                Confirm the prompt: tap <strong className="text-white">Install</strong>.
+                Confirm by tapping <strong className="text-white">Install</strong> when prompted.
               </li>
               <li>
-                Companion will appear on your Oppo A96 home screen and app drawer with the Companion icon and launch full-screen like a native app.
+                Companion will appear on your phone&apos;s home screen and app drawer with the Companion icon and launch full-screen like a native app.
               </li>
             </ol>
           </div>
-        ) : (
+        )}
+
+        {activeTab === "ios" && (
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-xs space-y-3">
-            <p className="font-medium text-white">How to install Companion on your Laptop:</p>
+            <p className="font-medium text-white">How to install Companion on iPhone &amp; iPad (Apple Safari):</p>
+            <ol className="list-decimal list-inside space-y-2 text-ink-muted leading-relaxed">
+              <li>
+                Open <span className="text-cyan-300">Safari</span> on your iPhone or iPad and navigate to your Companion website.
+              </li>
+              <li>
+                Tap the <strong className="text-white">Share button</strong> (the square with an arrow pointing upward at the bottom of the screen).
+              </li>
+              <li>
+                Scroll down in the share sheet and tap <strong className="text-white">&ldquo;Add to Home Screen&rdquo;</strong>.
+              </li>
+              <li>
+                In the top right corner, tap <strong className="text-white">Add</strong>.
+              </li>
+              <li>
+                Companion will appear directly on your iOS home screen as a standalone application.
+              </li>
+            </ol>
+            <div className="rounded-lg border border-amber-400/20 bg-amber-400/5 p-3 text-amber-200 text-[11px] leading-relaxed flex items-start gap-2">
+              <Bell className="h-4 w-4 shrink-0 text-amber-300 mt-0.5" />
+              <span>
+                <strong>iOS Notification Note:</strong> On iOS 16.4+, you must install Companion to your Home Screen first and open it from the Home Screen before Apple allows Web Push notifications to be enabled.
+              </span>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "desktop" && (
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-xs space-y-3">
+            <p className="font-medium text-white">How to install Companion on your Computer (Windows / Mac / Linux):</p>
             <ol className="list-decimal list-inside space-y-2 text-ink-muted leading-relaxed">
               <li>
                 Open this website in <span className="text-cyan-300">Google Chrome</span> or <span className="text-cyan-300">Microsoft Edge</span>.
@@ -185,13 +248,31 @@ export function AppInfoSection() {
                 Click <strong className="text-white">Install</strong> in the confirmation box.
               </li>
               <li>
-                Companion opens in its own standalone window without browser tabs or address bar, and can be pinned to your Windows Taskbar and Start Menu.
+                Companion opens in its own standalone window without browser tabs or address bar, and can be pinned to your Windows Taskbar, Start Menu, or Mac Dock.
               </li>
             </ol>
           </div>
         )}
+
+        {/* Troubleshooting & Help Section */}
+        <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-xs space-y-2.5">
+          <h4 className="font-semibold text-white flex items-center gap-1.5">
+            <HelpCircle className="h-4 w-4 text-cyan-400" />
+            Troubleshooting Installation
+          </h4>
+          <ul className="space-y-1.5 text-ink-muted text-[11px] leading-relaxed list-disc list-inside">
+            <li>
+              <strong className="text-ink-secondary">Don&apos;t see the &ldquo;Install app&rdquo; button?</strong> On Android, make sure you are using Chrome or Edge and not browsing in Incognito/Private mode. On iOS, you must use Safari (Apple disables PWA home screen installation on third-party iOS browsers).
+            </li>
+            <li>
+              <strong className="text-ink-secondary">Already installed?</strong> Check your home screen or app drawer. If Companion is already installed, the browser hides the install option to prevent duplicate shortcuts.
+            </li>
+            <li>
+              <strong className="text-ink-secondary">Cleared cache or refreshed?</strong> If your phone clears browser cache, your installed shortcut remains completely intact and connected to your cloud account.
+            </li>
+          </ul>
+        </div>
       </div>
     </Card>
   );
 }
-

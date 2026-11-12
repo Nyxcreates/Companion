@@ -20,10 +20,10 @@ const DATE_REGEX = /\b(\d{4}-\d{2}-\d{2})\b/;
  * Defaults to today for general requests ("plan my day", "timetable"),
  * and resolves to tomorrow when "tomorrow" is mentioned.
  */
-export function resolveTargetDate(userMessage: string, timezone: string): string {
+export function resolveTargetDate(userMessage: string, timezone: string, history?: ChatTurn[]): string {
   const lower = userMessage.toLowerCase();
 
-  // Explicit YYYY-MM-DD match
+  // Explicit YYYY-MM-DD match in current message
   const explicitMatch = lower.match(DATE_REGEX);
   if (explicitMatch) {
     return explicitMatch[1];
@@ -34,6 +34,16 @@ export function resolveTargetDate(userMessage: string, timezone: string): string
 
   if (lower.includes("tomorrow")) {
     return tomorrowStr;
+  }
+
+  // If user says "save it" / "looks good" / "confirm", inspect recent conversation history for target date
+  if (history && history.length > 0) {
+    for (let i = history.length - 1; i >= Math.max(0, history.length - 4); i--) {
+      const turnText = history[i].text.toLowerCase();
+      const histDateMatch = turnText.match(DATE_REGEX);
+      if (histDateMatch) return histDateMatch[1];
+      if (turnText.includes("tomorrow")) return tomorrowStr;
+    }
   }
 
   // If "today", "tonight", "this afternoon", "this evening", "now", or general planning

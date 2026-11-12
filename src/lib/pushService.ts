@@ -25,8 +25,11 @@ export interface PushDeliveryResult {
 
 let vapidConfigured = false;
 
+const DEFAULT_PUBLIC_KEY =
+  "BH89b0i3uIdb4yL7tB-13hB5_JXAEA5MfDrhoBdgf4OnycEDRanelJPU-j2dqt2kC_QvRxXwBpj158HDR_F43IE";
+
 export function getVapidPublicKey(): string {
-  return process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || "";
+  return process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || DEFAULT_PUBLIC_KEY;
 }
 
 function ensureVapidConfigured(): boolean {
