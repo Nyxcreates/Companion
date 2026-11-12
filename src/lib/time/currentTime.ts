@@ -158,3 +158,48 @@ export function minutesToTimeString(totalMinutes: number): string {
   const m = normalized % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
+
+/**
+ * Parses a YYYY-MM-DD date string and HH:mm time string in a specific timezone into an exact UTC Date.
+ * Timezone-safe across Daylight Saving Time and non-integer timezone offsets (e.g. Asia/Kolkata +5:30).
+ */
+export function parseDateTimeInTimezone(dateStr: string, timeStr: string, timezone: string): Date {
+  const validTz = isValidTimezone(timezone) ? timezone.trim() : DEFAULT_TIMEZONE;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const [h, min] = timeStr.split(":").map(Number);
+
+  let utc = new Date(Date.UTC(y, m - 1, d, h || 0, min || 0, 0));
+  // Iteratively adjust offset to accurately land on the exact local time in validTz
+  for (let i = 0; i < 3; i++) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: validTz,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+      hour12: false,
+    }).formatToParts(utc);
+
+    const p: Record<string, string> = {};
+    for (const part of parts) {
+      p[part.type] = part.value;
+    }
+
+    const formattedH = p.hour === "24" ? 0 : parseInt(p.hour, 10);
+    const asLocalUtc = Date.UTC(
+      parseInt(p.year, 10),
+      parseInt(p.month, 10) - 1,
+      parseInt(p.day, 10),
+      formattedH,
+      parseInt(p.minute, 10),
+      parseInt(p.second, 10)
+    );
+
+    const offset = asLocalUtc - Date.UTC(y, m - 1, d, h || 0, min || 0, 0);
+    utc = new Date(utc.getTime() - offset);
+  }
+
+  return utc;
+}

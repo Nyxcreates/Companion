@@ -3,6 +3,7 @@ import { connectToDatabase } from "@/lib/mongodb";
 import { PushSubscriptionModel } from "@/models/PushSubscription";
 import { UserModel } from "@/models/User";
 import { evaluateProactiveContext } from "@/services/notificationService";
+import { dispatchDueTimetableReminders } from "@/services/timetableReminderService";
 
 export const runtime = "nodejs";
 
@@ -65,11 +66,20 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Also dispatch any due timetable reminders and follow-up nudges
+    let timetableDispatchResult = null;
+    try {
+      timetableDispatchResult = await dispatchDueTimetableReminders();
+    } catch (dispatchErr) {
+      console.error("[Companion Cron] Timetable reminders dispatch error:", dispatchErr);
+    }
+
     return NextResponse.json({
       data: {
         evaluatedUsers: subscribedUids.length,
         totalNotificationsGenerated,
         results,
+        timetableDispatch: timetableDispatchResult,
         timestamp: new Date().toISOString(),
       },
     });

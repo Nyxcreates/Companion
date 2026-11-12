@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { connectToDatabase } from "@/lib/mongodb";
 import { ScheduleModel, type ScheduleDocument } from "@/models/Schedule";
 import { SchedulePersistenceError } from "@/lib/schedule/errors";
+import { syncTimetableReminders, cancelTimetableRemindersForDate } from "@/services/timetableReminderService";
 import type { ScheduleItem, ScheduleSummary } from "@/types/schedule";
 
 function toSummary(doc: ScheduleDocument): ScheduleSummary {
@@ -29,7 +30,13 @@ export async function saveSchedule(firebaseUid: string, date: string, items: Sch
       { $set: { items } },
       { new: true, upsert: true }
     );
-    return toSummary(doc);
+    const summary = toSummary(doc);
+    try {
+      await syncTimetableReminders(firebaseUid, summary);
+    } catch (syncErr) {
+      console.error("[Companion] Failed to sync timetable reminders:", syncErr);
+    }
+    return summary;
   } catch (error) {
     throw new SchedulePersistenceError("save schedule", error);
   }
@@ -106,7 +113,15 @@ export async function deleteSchedule(firebaseUid: string, date: string): Promise
   try {
     await connectToDatabase();
     const result = await ScheduleModel.deleteOne({ firebaseUid, date });
-    return result.deletedCount > 0 ? true : null;
+    if (result.deletedCount > 0) {
+      try {
+        await cancelTimetableRemindersForDate(firebaseUid, date);
+      } catch (cancelErr) {
+        console.error("[Companion] Failed to cancel timetable reminders:", cancelErr);
+      }
+      return true;
+    }
+    return null;
   } catch (error) {
     throw new SchedulePersistenceError("delete schedule", error);
   }

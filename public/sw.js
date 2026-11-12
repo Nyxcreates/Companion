@@ -143,11 +143,26 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
+  const reminderId = event.notification.data?.reminderId;
+  const uniqueKey = event.notification.data?.uniqueKey;
+
+  // Background report action to server if reminder metadata is attached
+  if (reminderId || uniqueKey) {
+    const actionName = event.action || "click";
+    event.waitUntil(
+      fetch("/api/schedule/reminders/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reminderId, uniqueKey, action: actionName }),
+      }).catch(() => {})
+    );
+  }
+
   if (event.action === "dismiss") {
     return;
   }
 
-  const urlToOpen = event.notification.data?.url || "/dashboard";
+  const urlToOpen = event.notification.data?.url || "/plan?tab=schedule";
 
   event.waitUntil(
     self.clients
