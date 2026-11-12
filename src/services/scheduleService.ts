@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { connectToDatabase } from "@/lib/mongodb";
 import { ScheduleModel, type ScheduleDocument } from "@/models/Schedule";
 import { SchedulePersistenceError } from "@/lib/schedule/errors";
@@ -42,6 +43,61 @@ export async function getSchedule(firebaseUid: string, date: string): Promise<Sc
     return doc ? toSummary(doc) : null;
   } catch (error) {
     throw new SchedulePersistenceError("get schedule", error);
+  }
+}
+
+/** Returns null if not found or not owned by this firebaseUid. */
+export async function getScheduleById(
+  firebaseUid: string,
+  id: string | mongoose.Types.ObjectId
+): Promise<ScheduleSummary | null> {
+  if (!id || !mongoose.isValidObjectId(id)) return null;
+  try {
+    await connectToDatabase();
+    const doc = await ScheduleModel.findOne({ _id: id, firebaseUid });
+    return doc ? toSummary(doc) : null;
+  } catch (error) {
+    throw new SchedulePersistenceError("get schedule by id", error);
+  }
+}
+
+/** Hydrates multiple schedules by dates, owner-scoped by firebaseUid. */
+export async function getSchedulesByDates(
+  firebaseUid: string,
+  dates: string[]
+): Promise<Map<string, ScheduleSummary>> {
+  const map = new Map<string, ScheduleSummary>();
+  const validDates = dates.filter((d): d is string => typeof d === "string" && Boolean(d));
+  if (validDates.length === 0) return map;
+  try {
+    await connectToDatabase();
+    const docs = await ScheduleModel.find({ firebaseUid, date: { $in: validDates } });
+    for (const doc of docs) {
+      map.set(doc.date, toSummary(doc));
+    }
+    return map;
+  } catch (error) {
+    throw new SchedulePersistenceError("get schedules by dates", error);
+  }
+}
+
+/** Hydrates multiple schedules by Mongo ObjectIds, owner-scoped by firebaseUid. */
+export async function getSchedulesByIds(
+  firebaseUid: string,
+  ids: (string | mongoose.Types.ObjectId)[]
+): Promise<Map<string, ScheduleSummary>> {
+  const map = new Map<string, ScheduleSummary>();
+  const validIds = ids.filter((id) => Boolean(id) && mongoose.isValidObjectId(id));
+  if (validIds.length === 0) return map;
+  try {
+    await connectToDatabase();
+    const docs = await ScheduleModel.find({ firebaseUid, _id: { $in: validIds } });
+    for (const doc of docs) {
+      map.set(String(doc._id), toSummary(doc));
+    }
+    return map;
+  } catch (error) {
+    throw new SchedulePersistenceError("get schedules by ids", error);
   }
 }
 

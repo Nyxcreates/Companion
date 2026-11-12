@@ -3,6 +3,7 @@ import { connectToDatabase } from "@/lib/mongodb";
 import { ConversationModel, type ConversationDocument } from "@/models/Conversation";
 import { MessageModel, type MessageDocument, type MessageRole } from "@/models/Message";
 import { ScheduleModel } from "@/models/Schedule";
+import { getSchedulesByDates, getSchedulesByIds } from "@/services/scheduleService";
 import { EmotionModel } from "@/models/Emotion";
 import { ConversationPersistenceError, InvalidConversationIdError } from "@/lib/ai/errors";
 import type { ChatTurn } from "@/lib/ai/types";
@@ -266,44 +267,41 @@ export async function getConversationWithMessages(
     const chronological = docs.reverse();
 
     // Batch load any live schedules associated with timetable messages
-    const scheduleDates = Array.from(
-      new Set(
-        chronological
-          .map((d) => d.scheduleDate)
-          .filter((d): d is string => typeof d === "string" && Boolean(d))
-      )
-    );
+    const scheduleDates: string[] = [];
+    const scheduleIds: string[] = [];
 
-    const activeSchedules = scheduleDates.length > 0
-      ? await ScheduleModel.find({ firebaseUid, date: { $in: scheduleDates } })
-      : [];
-
-    const scheduleMap = new Map<string, ScheduleSummary>();
-    for (const s of activeSchedules) {
-      scheduleMap.set(s.date, {
-        id: String(s._id),
-        date: s.date,
-        items: s.items.map((i) => ({
-          start: i.start,
-          end: i.end,
-          title: i.title,
-          type: i.type,
-          taskId: i.taskId ? String(i.taskId) : null,
-        })),
-        createdAt: s.createdAt.toISOString(),
-        updatedAt: s.updatedAt.toISOString(),
-      });
+    for (const d of chronological) {
+      if (d.scheduleDate && typeof d.scheduleDate === "string") {
+        scheduleDates.push(d.scheduleDate);
+      }
+      if (d.scheduleId) {
+        scheduleIds.push(String(d.scheduleId));
+      }
     }
+
+    // Hydrate schedules from schedule service (owner-scoped by firebaseUid)
+    const [dateScheduleMap, idScheduleMap] = await Promise.all([
+      getSchedulesByDates(firebaseUid, Array.from(new Set(scheduleDates))),
+      getSchedulesByIds(firebaseUid, Array.from(new Set(scheduleIds))),
+    ]);
 
     return {
       id: String(conversation._id),
       title: conversation.title,
       messages: chronological.map((doc) => {
+        const hasRef = Boolean(doc.scheduleDate || doc.scheduleId);
         let schedule: ScheduleSummary | null = null;
-        if (doc.scheduleDate && scheduleMap.has(doc.scheduleDate)) {
-          schedule = scheduleMap.get(doc.scheduleDate)!;
-        } else if (doc.scheduleSnapshot) {
-          schedule = doc.scheduleSnapshot as unknown as ScheduleSummary;
+        let scheduleDeleted = false;
+
+        if (hasRef) {
+          if (doc.scheduleDate && dateScheduleMap.has(doc.scheduleDate)) {
+            schedule = dateScheduleMap.get(doc.scheduleDate)!;
+          } else if (doc.scheduleId && idScheduleMap.has(String(doc.scheduleId))) {
+            schedule = idScheduleMap.get(String(doc.scheduleId))!;
+          } else {
+            // Reference was stored, but the schedule was later deleted from the database
+            scheduleDeleted = true;
+          }
         }
 
         return {
@@ -311,7 +309,10 @@ export async function getConversationWithMessages(
           role: toChatRole(doc.role),
           text: doc.content,
           createdAt: doc.createdAt.toISOString(),
+          scheduleDate: doc.scheduleDate ?? null,
+          scheduleId: doc.scheduleId ? String(doc.scheduleId) : null,
           schedule,
+          scheduleDeleted,
         };
       }),
     };

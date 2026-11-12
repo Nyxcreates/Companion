@@ -1,9 +1,17 @@
 "use client";
 
+/**
+ * Nikki Living Floating Overlay Component
+ *
+ * NOTE: This floating companion overlay operates client-side only while the application
+ * is open and active in the browser or PWA window. It does NOT run as an OS background
+ * process or floating system window when Companion is closed.
+ */
+
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, MessageCircle, X, Clock, Calendar, Minimize2, Move, Eye } from "lucide-react";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { Sparkles, MessageCircle, X, Clock, Calendar, Minimize2, Move, Eye, Hand } from "lucide-react";
 import { useNotifications } from "@/context/NotificationContext";
 import { useProfile } from "@/context/ProfileContext";
 import { useAuth } from "@/context/AuthContext";
@@ -16,9 +24,16 @@ import type { ScheduleSummary } from "@/types/schedule";
 const POSITION_STORAGE_KEY = "companion:nikki-floating-pos";
 const LAST_INTERACTION_KEY = "companion:last-interaction-time";
 const DISMISSED_GREETING_KEY = "companion:greeting-dismissed-session";
+const SESSION_GREETING_KEY = "companion:session-greeting-shown";
+const MINIMIZED_STORAGE_KEY = "companion:nikki-minimized";
 const LAST_GREETING_TIME_KEY = "companion:last-greeting-time";
 const LAST_GREETING_TEXT_KEY = "companion:last-greeting-text";
 const LAST_CHAT_MESSAGE_KEY = "companion:last-chat-message-time";
+
+/** sessionStorage key prefix for per-day timetable alert dedup */
+const TIMETABLE_ALERT_PREFIX = "companion:timetable-alerts:";
+/** sessionStorage key: user chose "Skip today" for timetable alerts */
+const TIMETABLE_SKIP_TODAY_KEY = "companion:timetable-skip-today";
 
 interface OpeningGreeting {
   id: string;
@@ -31,6 +46,259 @@ interface OpeningGreeting {
     payload?: string;
     variant?: "primary" | "secondary" | "ghost";
   }>;
+}
+
+/** An in-app timetable alert bubble shown while the app is open */
+interface TimetableAlert {
+  key: string;        // unique dedup key stored in sessionStorage
+  message: string;
+  subText?: string;
+  pose: CompanionPose;
+}
+
+/** Resolves the effective timezone from user profile or browser */
+function getUserTimezone(profileTimezone?: string | null): string {
+  if (profileTimezone && profileTimezone.trim()) {
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: profileTimezone.trim() });
+      return profileTimezone.trim();
+    } catch {
+      // fallback
+    }
+  }
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+/** Returns today's ISO date string "YYYY-MM-DD" in the user's timezone */
+function getTodayDateStr(tz?: string): string {
+  const now = new Date();
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz || undefined,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+  } catch {
+    return now.toISOString().slice(0, 10);
+  }
+}
+
+/** Returns local hours and minutes in the user's timezone */
+function getLocalMinutes(tz: string): { hours: number; minutes: number; totalMinutes: number } {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: tz,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date());
+    const h = parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10);
+    const m = parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10);
+    return { hours: h, minutes: m, totalMinutes: h * 60 + m };
+  } catch {
+    const now = new Date();
+    const h = now.getHours();
+    const m = now.getMinutes();
+    return { hours: h, minutes: m, totalMinutes: h * 60 + m };
+  }
+}
+
+/** sessionStorage key for set of shown alert keys per day */
+function getShownAlertsStorageKey(dateStr: string): string {
+  return `${TIMETABLE_ALERT_PREFIX}${dateStr}`;
+}
+
+/** Returns the set of shown alert keys for the given day from sessionStorage */
+function getShownAlertKeysToday(dateStr: string): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(getShownAlertsStorageKey(dateStr));
+    if (!raw) return new Set<string>();
+    const parsed = JSON.parse(raw);
+    return new Set<string>(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+/** Returns true if the alert key has already been shown today */
+function isAlertShownToday(dateStr: string, alertKey: string): boolean {
+  try {
+    return getShownAlertKeysToday(dateStr).has(alertKey);
+  } catch {
+    return false;
+  }
+}
+
+/** Mark an alert as shown for the day in the sessionStorage set */
+function markAlertShownToday(dateStr: string, alertKey: string): void {
+  try {
+    const set = getShownAlertKeysToday(dateStr);
+    set.add(alertKey);
+    sessionStorage.setItem(getShownAlertsStorageKey(dateStr), JSON.stringify(Array.from(set)));
+  } catch {
+    // safe fallback
+  }
+}
+
+/** Unmark an alert from today's set (e.g. when snoozed) */
+function unmarkAlertShownToday(dateStr: string, alertKey: string): void {
+  try {
+    const set = getShownAlertKeysToday(dateStr);
+    set.delete(alertKey);
+    sessionStorage.setItem(getShownAlertsStorageKey(dateStr), JSON.stringify(Array.from(set)));
+  } catch {
+    // safe fallback
+  }
+}
+
+/** Returns true if the user clicked "Skip today" for timetable alerts */
+function isTimetableSkippedToday(dateStr: string): boolean {
+  try {
+    return sessionStorage.getItem(TIMETABLE_SKIP_TODAY_KEY) === dateStr;
+  } catch {
+    return false;
+  }
+}
+
+/** Mark timetable alerts as skipped for today */
+function skipTimetableToday(dateStr: string): void {
+  try {
+    sessionStorage.setItem(TIMETABLE_SKIP_TODAY_KEY, dateStr);
+  } catch {
+    // safe fallback
+  }
+}
+
+/** Returns true if the current local time falls within quiet hours (using user timezone) */
+function isQuietHours(quietStart: string | null, quietEnd: string | null, tz: string): boolean {
+  if (!quietStart || !quietEnd) return false;
+  try {
+    const { totalMinutes: nowMins } = getLocalMinutes(tz);
+    const [sh, sm] = quietStart.split(":").map(Number);
+    const [eh, em] = quietEnd.split(":").map(Number);
+    const startMins = sh * 60 + (sm || 0);
+    const endMins = eh * 60 + (em || 0);
+    if (startMins <= endMins) {
+      return nowMins >= startMins && nowMins < endMins;
+    }
+    // Overnight quiet hours (e.g. 22:00 → 07:00)
+    return nowMins >= startMins || nowMins < endMins;
+  } catch {
+    return false;
+  }
+}
+
+/** Returns true if notifications are currently paused (pausedUntil is in the future) */
+function isPaused(pausedUntil: string | null): boolean {
+  if (!pausedUntil) return false;
+  try {
+    return new Date(pausedUntil) > new Date();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Evaluates today's schedule every minute and returns the next
+ * timetable alert that should be shown, or null if none.
+ *
+ * Rules:
+ *  - Uses user's timezone for all time comparisons and date resolution
+ *  - Respects preferences.proactiveEnabled, pausedUntil, quietHoursStart/End
+ *  - Never shows the same message twice (stores set of shown keys in sessionStorage)
+ *  - "Skip today" suppresses all timetable alerts for the rest of the day
+ *  - Don't invent times that aren't in the timetable (item.start is strictly used)
+ *  - Triggers:
+ *      • "get-ready": ~30 min before first item ("Time to get up and get ready, you need to leave in 30 minutes")
+ *      • "pre-<start>": 15 min before each upcoming non-break item ("Your 10:00 class starts in 15 minutes")
+ *      • "eod": end-of-day wrap-up when all items are past
+ */
+function evaluateTimetableAlert(
+  schedule: ScheduleSummary | null,
+  dateStr: string,
+  tz: string
+): TimetableAlert | null {
+  if (!schedule || schedule.items.length === 0) return null;
+  if (isTimetableSkippedToday(dateStr)) return null;
+
+  const { hours, totalMinutes } = getLocalMinutes(tz);
+
+  // Sort items by start time
+  const items = [...schedule.items].sort((a, b) => {
+    const [ah, am] = a.start.split(":").map(Number);
+    const [bh, bm] = b.start.split(":").map(Number);
+    return ah * 60 + (am || 0) - (bh * 60 + (bm || 0));
+  });
+
+  // Filter active non-break and non-free items
+  const activeItems = items.filter((it) => it.type !== "break" && it.type !== "free" && it.start && it.end);
+  if (activeItems.length === 0) return null;
+
+  // ── Trigger 1: ~30-min pre-first-item "get ready" ─────────────────────────
+  const firstItem = activeItems[0];
+  const [fh, fm] = firstItem.start.split(":").map(Number);
+  const firstStartMins = fh * 60 + (fm || 0);
+  const minsUntilFirst = firstStartMins - totalMinutes;
+
+  if (minsUntilFirst > 15 && minsUntilFirst <= 35) {
+    const key = `get-ready-${firstItem.start}`;
+    if (!isAlertShownToday(dateStr, key)) {
+      const timePhrase = minsUntilFirst === 30 ? "30 minutes" : `${minsUntilFirst} minutes`;
+      return {
+        key,
+        message: `Time to get up and get ready, you need to leave in ${timePhrase}`,
+        subText: firstItem.title
+          ? `Upcoming at ${firstItem.start}: "${firstItem.title}". Don't forget your essentials! 🎒`
+          : "Don't forget your essentials — you've got this! 💪",
+        pose: "wave",
+      };
+    }
+  }
+
+  // ── Trigger 2: 15-min pre-each-item reminder ──────────────────────────────
+  for (const item of activeItems) {
+    const [sh, sm] = item.start.split(":").map(Number);
+    const itemStartMins = sh * 60 + (sm || 0);
+    const diff = itemStartMins - totalMinutes;
+
+    if (diff > 0 && diff <= 15) {
+      const key = `pre-${item.start}`;
+      if (!isAlertShownToday(dateStr, key)) {
+        const timePhrase = diff === 15 ? "15 minutes" : `${diff} minute${diff === 1 ? "" : "s"}`;
+        const itemLabel = item.title ? item.title : "activity";
+        return {
+          key,
+          message: `Your ${item.start} ${itemLabel} starts in ${timePhrase}`,
+          subText: "Head over soon and take your time getting settled! ✨",
+          pose: "curious",
+        };
+      }
+    }
+  }
+
+  // ── Trigger 3: End-of-day wrap-up ─────────────────────────────────────────
+  const lastItem = activeItems[activeItems.length - 1];
+  const [lh, lm] = lastItem.end.split(":").map(Number);
+  const lastEndMins = lh * 60 + (lm || 0);
+
+  if (totalMinutes >= lastEndMins && hours >= 17) {
+    const key = `eod-${dateStr}`;
+    if (!isAlertShownToday(dateStr, key)) {
+      return {
+        key,
+        message: `That's a wrap for today! You finished all ${activeItems.length} activities. How did it go?`,
+        subText: "Take a moment to rest — you showed up and that always counts. ✨",
+        pose: "celebrate",
+      };
+    }
+  }
+
+  return null;
 }
 
 function mapGuidePoseToCompanionPose(pose: string): CompanionPose {
@@ -82,6 +350,7 @@ function pickGreetingVariant(
 
 export function NikkiProactivePresence() {
   const router = useRouter();
+  const reduceMotion = useReducedMotion();
   const { firebaseUser } = useAuth();
   const { profile } = useProfile();
   const { preferences, activeCheckIn, respondToCheckIn, dismissCheckIn } = useNotifications();
@@ -94,9 +363,135 @@ export function NikkiProactivePresence() {
   const [isInteractiveOpen, setIsInteractiveOpen] = useState(false);
   const [openingGreeting, setOpeningGreeting] = useState<OpeningGreeting | null>(null);
   const [activeSignal, setActiveSignal] = useState<{ state: string; pose: CompanionPose } | null>(null);
+  const [goodbyeMessage, setGoodbyeMessage] = useState<string | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isPositionLoaded, setIsPositionLoaded] = useState(false);
   const isDraggingRef = useRef(false);
+
+  // ── Timetable alert engine ─────────────────────────────────────────────────
+  const [todaySchedule, setTodaySchedule] = useState<ScheduleSummary | null>(null);
+  const [timetableAlert, setTimetableAlert] = useState<TimetableAlert | null>(null);
+  /** tracks which alert key is currently snoozed (suppressed until snoozeUntil ms) */
+  const snoozeRef = useRef<{ key: string; until: number } | null>(null);
+
+  // Restore minimized state from this browser session
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem(MINIMIZED_STORAGE_KEY) === "true") {
+        setIsMinimized(true);
+      }
+    } catch {
+      // safe fallback
+    }
+  }, []);
+
+  // ── Load today's schedule once on mount or timezone change ─────────────────
+  const fetchTodaySchedule = useCallback(() => {
+    if (!firebaseUser) return;
+    const tz = getUserTimezone(profile?.timezone);
+    const dateStr = getTodayDateStr(tz);
+    authFetch(`/api/schedule/${dateStr}`)
+      .then((res) => parseApiResponse<ScheduleSummary | null>(res).then((env) => {
+        if (res.ok) setTodaySchedule(env.data ?? null);
+      }))
+      .catch(() => { /* best-effort */ });
+  }, [firebaseUser, profile?.timezone]);
+
+  useEffect(() => {
+    fetchTodaySchedule();
+  }, [fetchTodaySchedule]);
+
+  // Sync today's schedule when chat creates/updates a schedule
+  useEffect(() => {
+    const handleScheduleChange = () => fetchTodaySchedule();
+    window.addEventListener("companion:schedule-change", handleScheduleChange);
+    return () => window.removeEventListener("companion:schedule-change", handleScheduleChange);
+  }, [fetchTodaySchedule]);
+
+  // ── Minute-tick timetable alert engine ────────────────────────────────────
+  useEffect(() => {
+    if (!firebaseUser) return;
+
+    function tick() {
+      // Gate 1: proactive must be enabled
+      if (preferences?.proactiveEnabled === false) return;
+      // Gate 2: notifications must not be paused
+      if (isPaused(preferences?.pausedUntil ?? null)) return;
+      // Gate 3: quiet hours
+      const tz = getUserTimezone(profile?.timezone);
+      if (isQuietHours(preferences?.quietHoursStart ?? null, preferences?.quietHoursEnd ?? null, tz)) return;
+      // Gate 4: don't interrupt while user is typing
+      if (document.activeElement &&
+        (document.activeElement.tagName === "INPUT" ||
+         document.activeElement.tagName === "TEXTAREA" ||
+         (document.activeElement as HTMLElement).isContentEditable)) return;
+
+      const dateStr = getTodayDateStr(tz);
+      if (!todaySchedule) {
+        fetchTodaySchedule();
+        return;
+      }
+      if (snoozeRef.current) {
+        if (Date.now() < snoozeRef.current.until) {
+          return;
+        }
+        snoozeRef.current = null;
+      }
+      const alert = evaluateTimetableAlert(todaySchedule, dateStr, tz);
+      if (!alert) return;
+
+      markAlertShownToday(dateStr, alert.key);
+      setTimetableAlert(alert);
+    }
+
+    // Fire immediately on mount/schedule-load, then every 60 s
+    tick();
+    const id = setInterval(tick, 60_000);
+    return () => clearInterval(id);
+  }, [firebaseUser, todaySchedule, preferences, profile?.timezone, fetchTodaySchedule]);
+
+  const handleRestoreFromDot = useCallback(() => {
+    setIsMinimized(false);
+    try {
+      sessionStorage.removeItem(MINIMIZED_STORAGE_KEY);
+    } catch {
+      // safe fallback
+    }
+  }, []);
+
+  const handleByeNikki = useCallback(() => {
+    setIsInteractiveOpen(false);
+    setActiveSignal({ state: "leaving", pose: "wave" });
+
+    const farewellLines = [
+      `Bye for now, ${userName}! 👋 Take care and see you soon!`,
+      `See you later, ${userName}! I'll be resting right here. Tap my dot whenever you need me! ✨`,
+      `Have a wonderful time, ${userName}! Wave to me anytime you want me back! 👋`,
+    ];
+    const line = farewellLines[Math.floor(Math.random() * farewellLines.length)];
+    setGoodbyeMessage(line);
+
+    try {
+      localStorage.setItem(
+        "companion:user-state",
+        JSON.stringify({ state: "leaving", timestamp: Date.now() })
+      );
+    } catch {
+      // safe fallback
+    }
+
+    // Wave and speak goodbye, then minimise to a small dot
+    setTimeout(() => {
+      setGoodbyeMessage(null);
+      setIsMinimized(true);
+      setActiveSignal(null);
+      try {
+        sessionStorage.setItem(MINIMIZED_STORAGE_KEY, "true");
+      } catch {
+        // safe fallback
+      }
+    }, 2200);
+  }, [userName]);
 
   // Listen to companion state change events triggered by chat intent interactions (goodbye, return, sleep, break)
   useEffect(() => {
@@ -153,9 +548,16 @@ export function NikkiProactivePresence() {
     if (!firebaseUser) return;
     if (typeof window === "undefined") return;
 
-    // Check if greeting was already dismissed in this browser session
-    const sessionDismissed = sessionStorage.getItem(DISMISSED_GREETING_KEY);
-    if (sessionDismissed === "true") return;
+    // Respect Settings toggle for proactive check-ins (proactiveEnabled)
+    if (preferences && preferences.proactiveEnabled === false) return;
+
+    // Show opening greeting at most once per session
+    try {
+      if (sessionStorage.getItem(SESSION_GREETING_KEY) === "1") return;
+      if (sessionStorage.getItem(DISMISSED_GREETING_KEY) === "true") return;
+    } catch {
+      // safe fallback
+    }
 
     // Rule: Avoid interrupting an active conversation (if user chatted in the last 2 minutes)
     try {
@@ -490,6 +892,11 @@ export function NikkiProactivePresence() {
       } else {
         const picked = pickGreetingVariant([
           {
+            message: `Good morning, ${userName}! Ready to start the day?`,
+            subText: "Shall we plan your day together so everything feels calm?",
+            pose: "wave",
+          },
+          {
             message: "Good morning! Did you sleep well?",
             subText: "Shall we plan your day together so everything feels calm?",
             pose: "wave",
@@ -685,10 +1092,15 @@ export function NikkiProactivePresence() {
     }
 
     if (greeting) {
-      sessionStorage.setItem(LAST_GREETING_TIME_KEY, now.getTime().toString());
+      try {
+        sessionStorage.setItem(SESSION_GREETING_KEY, "1");
+        sessionStorage.setItem(LAST_GREETING_TIME_KEY, now.getTime().toString());
+      } catch {
+        // safe fallback
+      }
       setOpeningGreeting(greeting);
     }
-  }, [firebaseUser, companionName, userName]);
+  }, [firebaseUser, companionName, userName, preferences]);
 
   useEffect(() => {
     evaluateOpeningGreeting();
@@ -755,6 +1167,8 @@ export function NikkiProactivePresence() {
     companionPose = activeSignal.pose;
   } else if (activeCheckIn) {
     companionPose = mapGuidePoseToCompanionPose(activeCheckIn.characterPose);
+  } else if (timetableAlert) {
+    companionPose = timetableAlert.pose;
   } else if (openingGreeting) {
     companionPose = openingGreeting.pose;
   } else if (isInteractiveOpen) {
@@ -766,10 +1180,46 @@ export function NikkiProactivePresence() {
   }
 
   const handleAction = async (
-    action: "accept" | "dismiss" | "snooze" | "talk",
+    action: "accept" | "dismiss" | "snooze" | "talk" | "skip-today",
     payload?: string,
     interventionType?: string
   ) => {
+    // ── Timetable alert specific actions ──────────────────────────────────────
+    if (timetableAlert) {
+      const userTz = getUserTimezone(profile?.timezone);
+      const dateStr = getTodayDateStr(userTz);
+      if (action === "dismiss") {
+        // "OK" — closes the alert (recorded in sessionStorage shown keys)
+        setTimetableAlert(null);
+        return;
+      }
+      if (action === "snooze") {
+        // Snooze 10 minutes: suppress until now + 10m and unmark from shown set
+        snoozeRef.current = { key: timetableAlert.key, until: Date.now() + 10 * 60 * 1000 };
+        unmarkAlertShownToday(dateStr, timetableAlert.key);
+        setTimetableAlert(null);
+        return;
+      }
+      if (action === "skip-today") {
+        // Skip today: suppresses timetable alerts for the rest of today
+        skipTimetableToday(dateStr);
+        setTimetableAlert(null);
+        return;
+      }
+      if (action === "talk") {
+        setTimetableAlert(null);
+        router.push("/dashboard");
+        return;
+      }
+      if (action === "accept" && payload?.startsWith("/")) {
+        setTimetableAlert(null);
+        router.push(payload);
+        return;
+      }
+      setTimetableAlert(null);
+      return;
+    }
+
     if (action === "dismiss") {
       if (activeCheckIn) {
         dismissCheckIn();
@@ -792,7 +1242,7 @@ export function NikkiProactivePresence() {
 
     if (payload && payload.startsWith("/")) {
       if (activeCheckIn) {
-        await respondToCheckIn(action, interventionType);
+        await respondToCheckIn(action === "snooze" ? "snooze" : "accept", interventionType);
       }
       setOpeningGreeting(null);
       router.push(payload);
@@ -800,7 +1250,7 @@ export function NikkiProactivePresence() {
     }
 
     if (activeCheckIn) {
-      await respondToCheckIn(action, interventionType);
+      await respondToCheckIn(action === "snooze" ? "snooze" : "accept", interventionType);
     }
     setOpeningGreeting(null);
   };
@@ -828,18 +1278,21 @@ export function NikkiProactivePresence() {
     if (isDraggingRef.current) return;
 
     if (isMinimized) {
-      setIsMinimized(false);
+      handleRestoreFromDot();
       return;
     }
 
-    if (activeCheckIn || openingGreeting) {
-      setIsInteractiveOpen(false);
-    } else {
-      setIsInteractiveOpen((prev) => !prev);
+    if (displayedMessage) {
+      // Tapping her opens the chat
+      handleAction("talk", undefined, activeCheckIn?.interventionType);
+      return;
     }
+
+    setIsInteractiveOpen((prev) => !prev);
   };
 
-  // Determine which speech bubble is active: server check-in takes precedence, then opening greeting
+  // Determine which speech bubble is active:
+  // priority: server check-in > timetable alert > opening greeting
   const displayedMessage = activeCheckIn
     ? {
         title: companionName,
@@ -847,16 +1300,32 @@ export function NikkiProactivePresence() {
         subText: activeCheckIn.subText,
         actions: activeCheckIn.actions,
         isServerCheckIn: true,
+        isTimetableAlert: false,
       }
-    : openingGreeting
+    : timetableAlert
       ? {
           title: companionName,
-          message: openingGreeting.message,
-          subText: openingGreeting.subText,
-          actions: openingGreeting.actions,
+          message: timetableAlert.message,
+          subText: timetableAlert.subText,
+          actions: [
+            { label: "OK", action: "dismiss" as const, variant: "primary" as const },
+            { label: "Snooze 10 min", action: "snooze" as const, variant: "secondary" as const },
+            { label: "Skip today", action: "skip-today" as const, variant: "ghost" as const },
+            { label: "View Timetable", action: "accept" as const, payload: "/plan?tab=schedule", variant: "ghost" as const },
+          ],
           isServerCheckIn: false,
+          isTimetableAlert: true,
         }
-      : null;
+      : openingGreeting
+        ? {
+            title: companionName,
+            message: openingGreeting.message,
+            subText: openingGreeting.subText,
+            actions: openingGreeting.actions,
+            isServerCheckIn: false,
+            isTimetableAlert: false,
+          }
+        : null;
 
   return (
     <motion.div
@@ -864,21 +1333,52 @@ export function NikkiProactivePresence() {
       dragMomentum={false}
       onDragEnd={handleDragEnd}
       animate={{ x: position.x, y: position.y }}
-      transition={{ type: "spring", damping: 30, stiffness: 400 }}
-      className={`fixed bottom-24 md:bottom-8 right-4 md:right-8 z-40 flex flex-col items-end select-none transition-opacity duration-200 ${
+      transition={reduceMotion ? { duration: 0.1 } : { type: "spring", damping: 30, stiffness: 400 }}
+      className={`fixed bottom-20 md:bottom-8 right-4 md:right-8 z-40 flex flex-col items-end select-none transition-opacity duration-200 ${
         !isPositionLoaded ? "opacity-0" : isTyping ? "opacity-30 hover:opacity-100" : "opacity-100"
       }`}
     >
+      {/* Speech Bubble: Goodbye Farewell */}
+      <AnimatePresence>
+        {goodbyeMessage && !isMinimized && (
+          <motion.div
+            key="goodbye-bubble"
+            initial={{ opacity: 0, y: 16, scale: 0.92 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.92 }}
+            transition={{ duration: reduceMotion ? 0.1 : 0.25 }}
+            className="pointer-events-auto mb-3 w-[calc(100vw-2rem)] sm:w-80 md:w-96 max-w-sm rounded-2xl border border-cyan-400/40 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-xl"
+          >
+            <div className="flex items-center gap-1.5 border-b border-white/10 pb-2 mb-2.5">
+              <span className="flex h-2 w-2 rounded-full bg-cyan-400" />
+              <span className="font-mono text-xs font-semibold text-cyan-300">
+                {companionName}
+              </span>
+              <span className="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] text-cyan-300/80 font-mono">
+                Farewell
+              </span>
+            </div>
+            <p className="font-display text-sm font-medium text-white leading-relaxed">
+              &ldquo;{goodbyeMessage}&rdquo;
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Speech Bubble: Active Check-In OR Opening Proactive Greeting */}
       <AnimatePresence>
-        {displayedMessage && !isMinimized && !isTyping && (
+        {displayedMessage && !goodbyeMessage && !isMinimized && !isTyping && (
           <motion.div
             key={activeCheckIn?.id || openingGreeting?.id || "bubble"}
             initial={{ opacity: 0, y: 16, scale: 0.92 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.92 }}
-            transition={{ type: "spring", damping: 22, stiffness: 280 }}
-            className="pointer-events-auto mb-3 w-80 sm:w-96 rounded-2xl border border-cyan-400/40 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-xl"
+            transition={
+              reduceMotion
+                ? { duration: 0.1 }
+                : { type: "spring", damping: 22, stiffness: 280 }
+            }
+            className="pointer-events-auto mb-3 w-[calc(100vw-2rem)] sm:w-80 md:w-96 max-w-sm rounded-2xl border border-cyan-400/40 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-xl"
           >
             {/* Header / Dismiss */}
             <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2.5">
@@ -888,13 +1388,18 @@ export function NikkiProactivePresence() {
                   {displayedMessage.title}
                 </span>
                 <span className="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] text-cyan-300/80 font-mono">
-                  {activeCheckIn ? "Check-in" : "Greetings"}
+                  {activeCheckIn ? "Check-in" : timetableAlert ? "Schedule" : "Greetings"}
                 </span>
               </div>
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => setIsMinimized(true)}
+                  onClick={() => {
+                    setIsMinimized(true);
+                    try {
+                      sessionStorage.setItem(MINIMIZED_STORAGE_KEY, "true");
+                    } catch {}
+                  }}
                   className="rounded-md p-1 text-ink-muted hover:bg-white/10 hover:text-white transition-colors"
                   title="Minimize Nikki"
                   aria-label="Minimize Nikki"
@@ -913,16 +1418,22 @@ export function NikkiProactivePresence() {
               </div>
             </div>
 
-            {/* Message Body */}
-            <p className="font-display text-sm font-medium text-white leading-relaxed">
-              &ldquo;{displayedMessage.message}&rdquo;
-            </p>
-
-            {displayedMessage.subText && (
-              <p className="mt-1 text-xs text-ink-muted leading-normal">
-                {displayedMessage.subText}
+            {/* Message Body - Tapping opens chat */}
+            <div
+              onClick={() => handleAction("talk", undefined, activeCheckIn?.interventionType)}
+              className="cursor-pointer group"
+              title="Click to open chat"
+            >
+              <p className="font-display text-sm font-medium text-white leading-relaxed group-hover:text-cyan-200 transition-colors">
+                &ldquo;{displayedMessage.message}&rdquo;
               </p>
-            )}
+
+              {displayedMessage.subText && (
+                <p className="mt-1 text-xs text-ink-muted leading-normal">
+                  {displayedMessage.subText}
+                </p>
+              )}
+            </div>
 
             {/* Actions */}
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -946,13 +1457,17 @@ export function NikkiProactivePresence() {
 
       {/* Speech Bubble: User-Tapped Quick Interaction Menu */}
       <AnimatePresence>
-        {!displayedMessage && isInteractiveOpen && !isMinimized && !isTyping && (
+        {!displayedMessage && !goodbyeMessage && isInteractiveOpen && !isMinimized && !isTyping && (
           <motion.div
             initial={{ opacity: 0, y: 16, scale: 0.92 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.92 }}
-            transition={{ type: "spring", damping: 22, stiffness: 280 }}
-            className="pointer-events-auto mb-3 w-72 sm:w-80 rounded-2xl border border-cyan-400/35 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-xl"
+            transition={
+              reduceMotion
+                ? { duration: 0.1 }
+                : { type: "spring", damping: 22, stiffness: 280 }
+            }
+            className="pointer-events-auto mb-3 w-[calc(100vw-2rem)] sm:w-80 rounded-2xl border border-cyan-400/35 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-xl"
           >
             <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2.5">
               <div className="flex items-center gap-1.5">
@@ -960,11 +1475,19 @@ export function NikkiProactivePresence() {
                 <span className="font-mono text-xs font-semibold text-cyan-300">
                   {companionName}
                 </span>
+                <span className="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] text-cyan-300/80 font-mono">
+                  Menu
+                </span>
               </div>
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => setIsMinimized(true)}
+                  onClick={() => {
+                    setIsMinimized(true);
+                    try {
+                      sessionStorage.setItem(MINIMIZED_STORAGE_KEY, "true");
+                    } catch {}
+                  }}
                   className="rounded-md p-1 text-ink-muted hover:bg-white/10 hover:text-white transition-colors"
                   title="Minimize"
                 >
@@ -983,12 +1506,12 @@ export function NikkiProactivePresence() {
 
             <p className="font-display text-sm font-medium text-white leading-relaxed">
               {isLateNight
-                ? "It's late, moon! Make sure to take care of yourself and rest soon."
+                ? `It's late, ${userName}! Make sure to take care of yourself and rest soon.`
                 : currentHour < 12
-                  ? "Good morning! I'm here with you—ready to tackle the day?"
+                  ? `Good morning, ${userName}! I'm here with you—ready to tackle the day?`
                   : currentHour < 18
-                    ? "Hope your day is flowing nicely. Need to plan or focus on anything?"
-                    : "Evening! How are you feeling right now?"}
+                    ? `Hope your day is flowing nicely, ${userName}. Need to plan or focus on anything?`
+                    : `Evening, ${userName}! How are you feeling right now?`}
             </p>
 
             <div className="mt-3.5 flex flex-col gap-1.5">
@@ -1003,6 +1526,16 @@ export function NikkiProactivePresence() {
               >
                 <MessageCircle className="h-3.5 w-3.5 mr-2" />
                 <span>Chat with {companionName}</span>
+              </Button>
+
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleByeNikki}
+                className="text-xs justify-start h-8 text-cyan-200/90 hover:text-white hover:bg-white/10"
+              >
+                <Hand className="h-3.5 w-3.5 mr-2 text-cyan-400" />
+                <span>Bye {companionName}</span>
               </Button>
 
               <Button
@@ -1049,50 +1582,61 @@ export function NikkiProactivePresence() {
       {/* Floating Draggable Avatar Widget */}
       <div className="relative flex items-center gap-2">
         {isMinimized ? (
-          // Minimized Pill / Orb
-          <motion.div
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.92 }}
-            onClick={() => setIsMinimized(false)}
-            className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-cyan-400/40 bg-slate-900/90 px-3 py-1.5 shadow-lg backdrop-blur-md cursor-pointer hover:border-cyan-400"
-            title={`Click to expand ${companionName}`}
+          // Minimized Small Dot
+          <motion.button
+            type="button"
+            whileHover={reduceMotion ? {} : { scale: 1.3 }}
+            whileTap={reduceMotion ? {} : { scale: 0.85 }}
+            onClick={handleRestoreFromDot}
+            className="pointer-events-auto relative flex h-4 w-4 md:h-5 md:w-5 items-center justify-center rounded-full bg-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.85)] hover:bg-cyan-300 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-cyan-300"
+            title={`Tap to wake ${companionName}`}
+            aria-label={`Tap to wake ${companionName}`}
           >
-            <div className="h-5 w-5">
-              <CompanionCharacter pose="idle" className="h-full w-full" />
-            </div>
-            <span className="font-mono text-xs font-medium text-cyan-300">{companionName}</span>
-          </motion.div>
+            {!reduceMotion && (
+              <span className="absolute -inset-1 rounded-full bg-cyan-400/40 animate-ping pointer-events-none" />
+            )}
+            <span className="h-1.5 w-1.5 rounded-full bg-slate-950" />
+          </motion.button>
         ) : (
-          // Full Floating Avatar
+          // Full Floating Avatar with gentle idle hover
           <motion.div
-            whileHover={{ scale: 1.06 }}
-            whileTap={{ scale: 0.94 }}
-            className="pointer-events-auto relative group cursor-grab active:cursor-grabbing"
-            onClick={handleAvatarClick}
-            title={`Drag to reposition · Click to interact with ${companionName}`}
+            animate={reduceMotion ? { y: 0 } : { y: [0, -4, 0] }}
+            transition={
+              reduceMotion
+                ? { duration: 0.1 }
+                : { duration: 3.5, repeat: Infinity, ease: "easeInOut" }
+            }
           >
-            {/* Glow ambient background halo */}
-            <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-cyan-500/25 to-teal-500/25 blur-md opacity-75 group-hover:opacity-100 transition-opacity pointer-events-none" />
+            <motion.div
+              whileHover={reduceMotion ? {} : { scale: 1.06 }}
+              whileTap={reduceMotion ? {} : { scale: 0.94 }}
+              className="pointer-events-auto relative group cursor-grab active:cursor-grabbing"
+              onClick={handleAvatarClick}
+              title={`Drag to reposition · Click to interact with ${companionName}`}
+            >
+              {/* Glow ambient background halo */}
+              <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-cyan-500/25 to-teal-500/25 blur-md opacity-75 group-hover:opacity-100 transition-opacity pointer-events-none" />
 
-            <div className="relative flex h-14 w-14 items-center justify-center rounded-full border border-cyan-400/45 bg-slate-900/90 shadow-xl backdrop-blur-md">
-              <div className="h-10 w-10">
-                <CompanionCharacter pose={companionPose} className="h-full w-full" />
-              </div>
+              <div className="relative flex h-12 w-12 md:h-14 md:w-14 items-center justify-center rounded-full border border-cyan-400/45 bg-slate-900/90 shadow-xl backdrop-blur-md">
+                <div className="h-9 w-9 md:h-10 md:w-10">
+                  <CompanionCharacter pose={companionPose} className="h-full w-full" />
+                </div>
 
-              {/* Active check-in alert badge */}
-              {(activeCheckIn || openingGreeting) && (
-                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-cyan-400 text-[10px] text-slate-950 font-bold shadow-md animate-bounce">
-                  !
-                </span>
-              )}
+                {/* Active check-in alert badge */}
+                {(activeCheckIn || openingGreeting) && (
+                  <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-cyan-400 text-[10px] text-slate-950 font-bold shadow-md animate-bounce">
+                    !
+                  </span>
+                )}
 
-              {/* Subtle drag handle indicator on hover */}
-              <div className="absolute -bottom-1 inset-x-0 flex justify-center opacity-0 group-hover:opacity-75 transition-opacity">
-                <div className="rounded-full bg-slate-800 px-1 py-0.5 border border-white/20">
-                  <Move className="h-2 w-2 text-ink-muted" />
+                {/* Subtle drag handle indicator on hover */}
+                <div className="absolute -bottom-1 inset-x-0 flex justify-center opacity-0 group-hover:opacity-75 transition-opacity">
+                  <div className="rounded-full bg-slate-800 px-1 py-0.5 border border-white/20">
+                    <Move className="h-2 w-2 text-ink-muted" />
+                  </div>
                 </div>
               </div>
-            </div>
+            </motion.div>
           </motion.div>
         )}
       </div>

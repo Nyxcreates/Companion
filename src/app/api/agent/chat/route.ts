@@ -111,7 +111,11 @@ export async function POST(request: NextRequest) {
         // eslint-disable-next-line no-console
         console.error("[Companion] Schedule deletion failed (non-fatal to chat):", deleteError);
       }
-    } else if (agentResponse.intent === "timetable_request" || agentResponse.intent === "reschedule_request") {
+    } else if (
+      agentResponse.intent === "timetable_request" ||
+      agentResponse.intent === "reschedule_request" ||
+      (agentResponse.intent === "planning" && /\b(timetable|schedule)\b/i.test(data.message))
+    ) {
       try {
         schedule = await generateAndPersistSchedule(user.uid, data.message, recentHistory, data.timezone);
       } catch (scheduleError) {

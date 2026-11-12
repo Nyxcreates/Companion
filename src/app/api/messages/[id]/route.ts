@@ -54,7 +54,14 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     }
 
     const convId = String(updatedUserMsg.conversationId);
-    let assistantMessageData: { id: string; role: "nikki"; text: string; schedule?: ScheduleSummary } | null = null;
+    let assistantMessageData: {
+      id: string;
+      role: "nikki";
+      text: string;
+      schedule?: ScheduleSummary;
+      scheduleDate?: string | null;
+      scheduleId?: string | null;
+    } | null = null;
 
     if (shouldRegenerate && isGeminiConfigured) {
       try {
@@ -85,6 +92,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
             role: "nikki",
             text: nextAssistant.content,
             schedule: schedule ?? (nextAssistant.scheduleSnapshot as unknown as ScheduleSummary) ?? undefined,
+            scheduleDate: nextAssistant.scheduleDate ?? null,
+            scheduleId: nextAssistant.scheduleId ? String(nextAssistant.scheduleId) : null,
           };
         } else {
           const newAssistantDoc = await saveMessage({
@@ -101,6 +110,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
             role: "nikki",
             text: newAssistantDoc.content,
             schedule: schedule ?? undefined,
+            scheduleDate: newAssistantDoc.scheduleDate ?? null,
+            scheduleId: newAssistantDoc.scheduleId ? String(newAssistantDoc.scheduleId) : null,
           };
         }
       } catch (genError) {

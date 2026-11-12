@@ -32,6 +32,9 @@ interface DisplayTurn extends ChatTurn {
   id: string;
   /** Present only on a nikki turn that triggered successful schedule generation. */
   schedule?: ScheduleSummary;
+  scheduleDate?: string | null;
+  scheduleId?: string | null;
+  scheduleDeleted?: boolean;
 }
 
 interface ChatResponseData {
@@ -47,7 +50,14 @@ interface ChatResponseData {
 
 interface EditMessageResponseData {
   message: { id: string; role: "user"; text: string; createdAt: string };
-  assistantMessage?: { id: string; role: "nikki"; text: string; schedule?: ScheduleSummary };
+  assistantMessage?: {
+    id: string;
+    role: "nikki";
+    text: string;
+    schedule?: ScheduleSummary;
+    scheduleDate?: string | null;
+    scheduleId?: string | null;
+  };
 }
 
 interface CompanionChatPanelProps {
@@ -161,6 +171,9 @@ export function CompanionChatPanel({
             role: m.role,
             text: m.text,
             schedule: m.schedule ?? undefined,
+            scheduleDate: m.scheduleDate ?? null,
+            scheduleId: m.scheduleId ?? null,
+            scheduleDeleted: m.scheduleDeleted ?? false,
           }))
         );
         loadedConversationIdRef.current = conversationId;
@@ -231,7 +244,9 @@ export function CompanionChatPanel({
         // If a schedule was deleted, remove any rendered schedule for that date
         if (agentResponse.scheduleDeleted) {
           updated = updated.map((t) =>
-            t.schedule?.date === agentResponse.scheduleDeleted ? { ...t, schedule: undefined } : t
+            t.schedule?.date === agentResponse.scheduleDeleted || t.scheduleDate === agentResponse.scheduleDeleted
+              ? { ...t, schedule: undefined, scheduleDeleted: true }
+              : t
           );
         }
         return [
@@ -241,9 +256,20 @@ export function CompanionChatPanel({
             role: "nikki",
             text: agentResponse.message,
             schedule: agentResponse.schedule ?? undefined,
+            scheduleDate: agentResponse.schedule?.date ?? null,
+            scheduleId: agentResponse.schedule?.id ?? null,
+            scheduleDeleted: false,
           },
         ];
       });
+
+      if (agentResponse.schedule || agentResponse.scheduleDeleted) {
+        try {
+          window.dispatchEvent(new CustomEvent("companion:schedule-change"));
+        } catch {
+          // safe fallback
+        }
+      }
 
       // Update companion state for goodbye, return, or break signals
       if (agentResponse.companionSignal) {
@@ -334,6 +360,9 @@ export function CompanionChatPanel({
             ...nextTurns[turnIndex + 1],
             text: assistantMessage.text,
             schedule: assistantMessage.schedule ?? nextTurns[turnIndex + 1].schedule,
+            scheduleDate: assistantMessage.scheduleDate ?? nextTurns[turnIndex + 1].scheduleDate,
+            scheduleId: assistantMessage.scheduleId ?? nextTurns[turnIndex + 1].scheduleId,
+            scheduleDeleted: false,
           };
         }
 
@@ -584,11 +613,16 @@ export function CompanionChatPanel({
                         )}
                       </div>
 
-                      {turn.schedule && (
+                      {turn.schedule && turn.schedule.items ? (
                         <div className="mt-2 w-full max-w-[100%]">
                           <ScheduleTimeline schedule={turn.schedule} />
                         </div>
-                      )}
+                      ) : (turn.scheduleDeleted || (turn.scheduleDate && !turn.schedule) || (turn.scheduleId && !turn.schedule)) ? (
+                        <div className="mt-2 flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-ink-muted">
+                          <CalendarClock className="h-3.5 w-3.5 text-ink-muted/70" />
+                          <span>Timetable was removed</span>
+                        </div>
+                      ) : null}
                     </div>
                   )}
                 </motion.div>

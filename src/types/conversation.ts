@@ -16,6 +16,9 @@ export interface ConversationMessage {
   text: string;
   createdAt: string;
   schedule?: ScheduleSummary | null;
+  scheduleDate?: string | null;
+  scheduleId?: string | null;
+  scheduleDeleted?: boolean;
 }
 
 export interface ConversationDetail {

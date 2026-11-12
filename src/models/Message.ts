@@ -7,7 +7,7 @@ export interface MessageDocument extends Document {
   firebaseUid: string;
   role: MessageRole;
   content: string;
-  scheduleId?: mongoose.Types.ObjectId | null;
+  scheduleId?: mongoose.Types.ObjectId | string | null;
   scheduleDate?: string | null;
   scheduleSnapshot?: Record<string, unknown> | null;
   createdAt: Date;
