@@ -53,7 +53,14 @@ export interface CheckInTrigger {
     | "inactive_return"
     | "task_waiting"
     | "wellbeing_water"
-    | "completed_something";
+    | "completed_something"
+    | "before_college"
+    | "upcoming_activity"
+    | "before_departure"
+    | "study_time"
+    | "after_returning"
+    | "morning_checkin"
+    | "evening_checkin";
   message: string;
   subText?: string;
   characterPose: "greet" | "idle" | "point" | "ponder" | "celebrate";
@@ -64,5 +71,14 @@ export interface CheckInTrigger {
     payload?: string;
     variant?: "primary" | "secondary" | "ghost";
   }[];
-  interventionType?: "break" | "water" | "stretch" | "music" | "chat" | "sleep";
+  interventionType?:
+    | "break"
+    | "water"
+    | "stretch"
+    | "music"
+    | "chat"
+    | "sleep"
+    | "schedule"
+    | "commitment"
+    | "focus";
 }

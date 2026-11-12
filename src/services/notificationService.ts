@@ -364,6 +364,305 @@ export async function evaluateProactiveContext(
 
   const isCatEnabled = (cat: NotificationCategory) => prefs.categoriesEnabled[cat] !== false;
 
+  // Compute authoritative local clock for the user
+  let localHour = 0;
+  let localMinute = 0;
+  let todayStr = "";
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: userTimezone || "UTC",
+      hour: "numeric",
+      minute: "numeric",
+      hour12: false,
+    }).formatToParts(now);
+    localHour = parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10);
+    localMinute = parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10);
+    todayStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: userTimezone || "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+  } catch {
+    localHour = now.getUTCHours();
+    localMinute = now.getUTCMinutes();
+    todayStr = now.toISOString().slice(0, 10);
+  }
+  const currentMinutes = localHour * 60 + localMinute;
+
+  // 0. Proactive Timetable & Daily Context Interaction Engine
+  if (isCatEnabled("timetable_reminder") && !inQuietHours) {
+    const todaySchedule = await ScheduleModel.findOne({ firebaseUid, date: todayStr });
+    if (todaySchedule && todaySchedule.items && todaySchedule.items.length > 0) {
+      for (const item of todaySchedule.items) {
+        if (!item.start || !item.end) continue;
+        const [sH, sM] = item.start.split(":").map(Number);
+        const [eH, eM] = item.end.split(":").map(Number);
+        const itemStartMins = sH * 60 + (sM || 0);
+        const itemEndMins = eH * 60 + (eM || 0);
+        const diffBeforeStart = itemStartMins - currentMinutes;
+        const diffAfterEnd = currentMinutes - itemEndMins;
+        const lowerTitle = item.title.toLowerCase();
+
+        // A. Upcoming Activity (15 to 35 min before start)
+        if (diffBeforeStart > 15 && diffBeforeStart <= 35) {
+          const recentNotif = await NotificationModel.findOne({
+            firebaseUid,
+            category: "timetable_reminder",
+            "metadata.itemTitle": item.title,
+            createdAt: { $gte: new Date(now.getTime() - 90 * 60 * 1000) },
+          });
+
+          if (!recentNotif) {
+            const isCollegeOrClass = /college|class|lecture|exam|uni|school/.test(lowerTitle);
+            const msg = isCollegeOrClass
+              ? "Heyyy, your college starts soon. Go get ready! Have you had breakfast?"
+              : `Heyyy, "${item.title}" starts in about ${diffBeforeStart} minutes. Ready for it?`;
+
+            await createNotification({
+              firebaseUid,
+              category: "timetable_reminder",
+              title: isCollegeOrClass ? "College Starts Soon" : `Upcoming: ${item.title}`,
+              body: msg,
+              actionUrl: "/plan?tab=schedule",
+              actionLabel: "View Timetable",
+              metadata: { itemTitle: item.title, date: todayStr },
+            });
+            newNotificationsCount++;
+
+            if (!activeCheckIn && prefs.proactiveEnabled) {
+              activeCheckIn = {
+                id: `schedule_${itemStartMins}_${item.title}`,
+                triggerType: isCollegeOrClass ? "before_college" : "upcoming_activity",
+                message: msg,
+                subText: `Scheduled for ${item.start}–${item.end}`,
+                characterPose: "greet",
+                characterGaze: "center",
+                actions: [
+                  { label: "View Timetable", action: "accept", payload: "/plan?tab=schedule", variant: "primary" },
+                  { label: "Talk to Nikki", action: "talk", variant: "secondary" },
+                  { label: "Dismiss", action: "dismiss", variant: "ghost" },
+                ],
+                interventionType: "schedule",
+              };
+            }
+            break;
+          }
+        }
+
+        // B. Before Departure / Commute (5 to 15 min before start of fixed commitment or college/work)
+        if (
+          diffBeforeStart > 0 &&
+          diffBeforeStart <= 15 &&
+          (item.type === "commitment" || /college|class|work|meeting|appointment|travel/.test(lowerTitle))
+        ) {
+          const recentDepNotif = await NotificationModel.findOne({
+            firebaseUid,
+            category: "commitment_reminder",
+            "metadata.itemTitle": item.title,
+            createdAt: { $gte: new Date(now.getTime() - 60 * 60 * 1000) },
+          });
+
+          if (!recentDepNotif) {
+            const depMsg = `You should probably leave in ${diffBeforeStart} minutes for ${item.title}. Don't forget your bag and essentials!`;
+            await createNotification({
+              firebaseUid,
+              category: "commitment_reminder",
+              title: `Departure Time: ${item.title}`,
+              body: depMsg,
+              actionUrl: "/plan?tab=schedule",
+              actionLabel: "View Schedule",
+              metadata: { itemTitle: item.title, date: todayStr },
+            });
+            newNotificationsCount++;
+
+            if (!activeCheckIn && prefs.proactiveEnabled) {
+              activeCheckIn = {
+                id: `dep_${itemStartMins}_${item.title}`,
+                triggerType: "before_departure",
+                message: depMsg,
+                subText: "Have a safe and peaceful journey!",
+                characterPose: "point",
+                characterGaze: "center",
+                actions: [
+                  { label: "On my way!", action: "accept", variant: "primary" },
+                  { label: "View Schedule", action: "accept", payload: "/plan?tab=schedule", variant: "secondary" },
+                ],
+                interventionType: "commitment",
+              };
+            }
+            break;
+          }
+        }
+
+        // C. Study / Task Block in Progress (within first 15 mins of start)
+        if (currentMinutes >= itemStartMins && currentMinutes < itemEndMins && (item.type === "task" || lowerTitle.includes("study"))) {
+          if (currentMinutes - itemStartMins <= 15) {
+            const recentStudyNotif = await NotificationModel.findOne({
+              firebaseUid,
+              category: "focus_reminder",
+              "metadata.itemTitle": item.title,
+              createdAt: { $gte: new Date(now.getTime() - 60 * 60 * 1000) },
+            });
+
+            if (!recentStudyNotif) {
+              const studyMsg = `Okay, time for your study block: "${item.title}". Let's tackle one thing at a time.`;
+              await createNotification({
+                firebaseUid,
+                category: "focus_reminder",
+                title: "Study Block Time",
+                body: studyMsg,
+                actionUrl: "/focus",
+                actionLabel: "Start Focus",
+                metadata: { itemTitle: item.title, date: todayStr },
+              });
+              newNotificationsCount++;
+
+              if (!activeCheckIn && prefs.proactiveEnabled) {
+                activeCheckIn = {
+                  id: `study_${itemStartMins}`,
+                  triggerType: "study_time",
+                  message: studyMsg,
+                  subText: "Remember, steady and calm beats rushing every time.",
+                  characterPose: "ponder",
+                  characterGaze: "center",
+                  actions: [
+                    { label: "Start Focus Session", action: "accept", payload: "/focus", variant: "primary" },
+                    { label: "Review Tasks", action: "accept", payload: "/plan", variant: "secondary" },
+                  ],
+                  interventionType: "focus",
+                };
+              }
+              break;
+            }
+          }
+        }
+
+        // D. After Returning (0 to 45 min after major commitment ended)
+        if (diffAfterEnd >= 0 && diffAfterEnd <= 45 && /college|class|school|work|exam/.test(lowerTitle)) {
+          const recentReturn = await NotificationModel.findOne({
+            firebaseUid,
+            category: "nikki_supportive",
+            "metadata.returnFrom": item.title,
+            createdAt: { $gte: new Date(now.getTime() - 120 * 60 * 1000) },
+          });
+
+          if (!recentReturn) {
+            const returnMsg = `You're back! How was ${item.title.toLowerCase()} today? Take a breather and grab some water.`;
+            await createNotification({
+              firebaseUid,
+              category: "nikki_supportive",
+              title: "Welcome Back!",
+              body: returnMsg,
+              actionUrl: "/dashboard",
+              actionLabel: "Tell Nikki",
+              metadata: { returnFrom: item.title, date: todayStr },
+            });
+            newNotificationsCount++;
+
+            if (!activeCheckIn && prefs.proactiveEnabled) {
+              activeCheckIn = {
+                id: `return_${itemEndMins}`,
+                triggerType: "after_returning",
+                message: returnMsg,
+                subText: "I'm so glad to see you back safe.",
+                characterPose: "celebrate",
+                characterGaze: "center",
+                actions: [
+                  { label: "Talk to Nikki", action: "talk", variant: "primary" },
+                  { label: "Check Rest of Day", action: "accept", payload: "/plan?tab=schedule", variant: "secondary" },
+                ],
+                interventionType: "chat",
+              };
+            }
+            break;
+          }
+        }
+      }
+
+      // E. Morning Overview (07:00 to 09:30)
+      if (localHour >= 7 && localHour < 10 && !activeCheckIn) {
+        const morningNotif = await NotificationModel.findOne({
+          firebaseUid,
+          category: "timetable_reminder",
+          "metadata.type": "morning_overview",
+          createdAt: { $gte: new Date(now.getTime() - 10 * 60 * 60 * 1000) },
+        });
+
+        if (!morningNotif) {
+          const count = todaySchedule.items.length;
+          const morningMsg = `Good morninggg! You're up early today! You have ${count} ${count === 1 ? "activity" : "activities"} planned on your timetable.`;
+          await createNotification({
+            firebaseUid,
+            category: "timetable_reminder",
+            title: "Good Morning!",
+            body: morningMsg,
+            actionUrl: "/plan?tab=schedule",
+            actionLabel: "Open Schedule",
+            metadata: { type: "morning_overview", date: todayStr },
+          });
+          newNotificationsCount++;
+
+          if (prefs.proactiveEnabled) {
+            activeCheckIn = {
+              id: `morning_${todayStr}`,
+              triggerType: "morning_checkin",
+              message: morningMsg,
+              subText: "Have you had breakfast and checked what's ahead today?",
+              characterPose: "greet",
+              characterGaze: "center",
+              actions: [
+                { label: "View Today's Plan", action: "accept", payload: "/plan?tab=schedule", variant: "primary" },
+                { label: "Talk to Nikki", action: "talk", variant: "secondary" },
+              ],
+              interventionType: "schedule",
+            };
+          }
+        }
+      }
+
+      // F. Evening Reflection (18:00 to 21:30)
+      if (localHour >= 18 && localHour < 22 && !activeCheckIn) {
+        const eveningNotif = await NotificationModel.findOne({
+          firebaseUid,
+          category: "nikki_supportive",
+          "metadata.type": "evening_reflection",
+          createdAt: { $gte: new Date(now.getTime() - 8 * 60 * 60 * 1000) },
+        });
+
+        if (!eveningNotif) {
+          const eveningMsg = "How did today go? Did everything work out with your plan?";
+          await createNotification({
+            firebaseUid,
+            category: "nikki_supportive",
+            title: "Evening Check-in",
+            body: eveningMsg,
+            actionUrl: "/dashboard",
+            actionLabel: "Tell Nikki",
+            metadata: { type: "evening_reflection", date: todayStr },
+          });
+          newNotificationsCount++;
+
+          if (prefs.proactiveEnabled) {
+            activeCheckIn = {
+              id: `evening_${todayStr}`,
+              triggerType: "evening_checkin",
+              message: eveningMsg,
+              subText: "Whatever happened, you did your best today.",
+              characterPose: "ponder",
+              characterGaze: "center",
+              actions: [
+                { label: "Reflect with Nikki", action: "talk", variant: "primary" },
+                { label: "Check Tomorrow", action: "accept", payload: "/plan?tab=schedule", variant: "secondary" },
+              ],
+              interventionType: "chat",
+            };
+          }
+        }
+      }
+    }
+  }
+
   // 1. Task Reminders: Due within next 24 hours or overdue
   if (isCatEnabled("task_reminder") && !inQuietHours) {
     const dueThreshold = new Date(now.getTime() + 24 * 60 * 60 * 1000);

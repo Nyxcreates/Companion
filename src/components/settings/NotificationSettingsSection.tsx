@@ -303,24 +303,90 @@ export function NotificationSettingsSection() {
         </div>
       </div>
 
-      {/* Main Proactive Presence Toggle */}
-      <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] p-4">
-        <div>
-          <p className="text-sm font-semibold text-ink-primary">
-            Proactive Check-Ins &amp; Floating Guide
-          </p>
-          <p className="text-xs text-ink-muted mt-0.5">
-            Allow Nikki to appear contextually when you take breaks, finish tasks, or need encouragement.
-          </p>
+      {/* Main Proactive Presence Toggle & Floating Avatar Controls */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 flex flex-col justify-between">
+          <div>
+            <p className="text-sm font-semibold text-ink-primary">
+              Proactive Messages &amp; Check-Ins
+            </p>
+            <p className="text-xs text-ink-muted mt-0.5">
+              Allow Nikki to contextually accompany you throughout the day based on your timetable.
+            </p>
+          </div>
+          <div className="pt-3">
+            <Button
+              size="sm"
+              variant={preferences.proactiveEnabled ? "secondary" : "ghost"}
+              onClick={handleToggleProactive}
+              className="text-xs w-full justify-center"
+            >
+              {preferences.proactiveEnabled ? "Proactive Messages: ON" : "Proactive Messages: OFF"}
+            </Button>
+          </div>
         </div>
-        <Button
-          size="sm"
-          variant={preferences.proactiveEnabled ? "secondary" : "ghost"}
-          onClick={handleToggleProactive}
-          className="text-xs"
-        >
-          {preferences.proactiveEnabled ? "Enabled" : "Disabled"}
-        </Button>
+
+        <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 flex flex-col justify-between">
+          <div>
+            <p className="text-sm font-semibold text-ink-primary">
+              Floating Avatar Presence
+            </p>
+            <p className="text-xs text-ink-muted mt-0.5">
+              Show draggable Nikki avatar floating across the companion app.
+            </p>
+          </div>
+          <div className="pt-3 flex gap-2">
+            <Button
+              size="sm"
+              variant={preferences.floatingPresence !== "off" ? "secondary" : "ghost"}
+              onClick={() => updatePreferences({ floatingPresence: "always" })}
+              className="text-xs flex-1 justify-center"
+            >
+              Visible
+            </Button>
+            <Button
+              size="sm"
+              variant={preferences.floatingPresence === "off" ? "secondary" : "ghost"}
+              onClick={() => updatePreferences({ floatingPresence: "off" })}
+              className="text-xs flex-1 justify-center"
+            >
+              Hidden
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Interaction Frequency Selector */}
+      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-ink-primary">Interaction Frequency</p>
+            <p className="text-xs text-ink-muted mt-0.5">
+              Control how often Nikki proactively speaks up or nudges you.
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2 pt-1">
+          {(["gentle", "balanced", "frequent"] as const).map((freq) => {
+            const isActive = (preferences.checkInFrequency || "balanced") === freq;
+            const labels = {
+              gentle: "Gentle (Minimal)",
+              balanced: "Balanced (Recommended)",
+              frequent: "Proactive (Frequent)",
+            };
+            return (
+              <Button
+                key={freq}
+                size="sm"
+                variant={isActive ? "secondary" : "ghost"}
+                onClick={() => updatePreferences({ checkInFrequency: freq })}
+                className="text-xs capitalize"
+              >
+                {labels[freq]}
+              </Button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Quick Snooze / Pause Controls */}

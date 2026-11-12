@@ -15,6 +15,7 @@ import { withDevDetail } from "@/lib/api/errorResponse";
 import {
   getOrCreateActiveConversation,
   saveMessage,
+  updateMessageSchedule,
   loadRecentHistory,
   saveEmotionObservation,
   updateConversationTitle,
@@ -22,7 +23,7 @@ import {
 import { processMemoryCandidates } from "@/services/memoryService";
 import { deriveTitleFromMessage } from "@/lib/conversation/titles";
 import { generateAndPersistSchedule, resolveTargetDate } from "@/lib/schedule/generate";
-import { deleteSchedule } from "@/services/scheduleService";
+import { deleteSchedule, getSchedule } from "@/services/scheduleService";
 import type { ScheduleSummary } from "@/types/schedule";
 
 export const runtime = "nodejs";
@@ -93,7 +94,7 @@ export async function POST(request: NextRequest) {
     // eslint-disable-next-line no-console
     console.log(`[Companion] Gemini request completed (intent: ${agentResponse.intent})`);
 
-    await saveMessage({
+    const assistantMessageDoc = await saveMessage({
       conversationId,
       firebaseUid: user.uid,
       role: "assistant",
@@ -176,6 +177,33 @@ export async function POST(request: NextRequest) {
       } catch (scheduleError) {
         // eslint-disable-next-line no-console
         console.error("[Companion] Schedule generation failed (non-fatal to chat):", scheduleError);
+      }
+    } else if (agentResponse.intent === "timetable_save") {
+      try {
+        const targetDate = resolveTargetDate(data.message, data.timezone ?? "UTC");
+        const existing = await getSchedule(user.uid, targetDate);
+        if (existing) {
+          schedule = existing;
+        } else {
+          schedule = await generateAndPersistSchedule(user.uid, data.message, recentHistory, data.timezone);
+        }
+      } catch (saveError) {
+        // eslint-disable-next-line no-console
+        console.error("[Companion] Timetable save failed (non-fatal to chat):", saveError);
+      }
+    }
+
+    // Persist timetable relationship to this message artifact so it survives refresh & history
+    if (schedule && assistantMessageDoc?._id) {
+      try {
+        await updateMessageSchedule(String(assistantMessageDoc._id), {
+          scheduleId: schedule.id,
+          scheduleDate: schedule.date,
+          scheduleSnapshot: schedule,
+        });
+      } catch (updateError) {
+        // eslint-disable-next-line no-console
+        console.error("[Companion] Failed to attach schedule to message:", updateError);
       }
     }
 

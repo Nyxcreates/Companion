@@ -7,6 +7,9 @@ export interface MessageDocument extends Document {
   firebaseUid: string;
   role: MessageRole;
   content: string;
+  scheduleId?: mongoose.Types.ObjectId | null;
+  scheduleDate?: string | null;
+  scheduleSnapshot?: Record<string, unknown> | null;
   createdAt: Date;
   updatedAt?: Date;
 }
@@ -17,6 +20,9 @@ const MessageSchema = new Schema<MessageDocument>(
     firebaseUid: { type: String, required: true, index: true },
     role: { type: String, enum: ["user", "assistant"], required: true },
     content: { type: String, required: true },
+    scheduleId: { type: Schema.Types.ObjectId, ref: "Schedule", default: null },
+    scheduleDate: { type: String, default: null },
+    scheduleSnapshot: { type: Schema.Types.Mixed, default: null },
   },
   { timestamps: true }
 );

@@ -1,3 +1,5 @@
+import type { ScheduleSummary } from "@/types/schedule";
+
 /** Client-facing shapes for the conversation history feature — mirrors src/types/profile.ts's pattern (plain, JSON-safe, no Mongo internals). */
 
 export interface ConversationSummary {
@@ -13,6 +15,7 @@ export interface ConversationMessage {
   role: "user" | "nikki";
   text: string;
   createdAt: string;
+  schedule?: ScheduleSummary | null;
 }
 
 export interface ConversationDetail {

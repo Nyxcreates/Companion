@@ -154,7 +154,14 @@ export function CompanionChatPanel({
           throw new Error(envelope.error?.message ?? "Couldn't load that conversation.");
         }
         if (cancelled) return;
-        setTurns(envelope.data.messages.map((m) => ({ id: m.id, role: m.role, text: m.text })));
+        setTurns(
+          envelope.data.messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            text: m.text,
+            schedule: m.schedule ?? undefined,
+          }))
+        );
         loadedConversationIdRef.current = conversationId;
       } catch (err) {
         if (cancelled) return;

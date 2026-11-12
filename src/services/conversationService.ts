@@ -2,11 +2,13 @@ import mongoose from "mongoose";
 import { connectToDatabase } from "@/lib/mongodb";
 import { ConversationModel, type ConversationDocument } from "@/models/Conversation";
 import { MessageModel, type MessageDocument, type MessageRole } from "@/models/Message";
+import { ScheduleModel } from "@/models/Schedule";
 import { EmotionModel } from "@/models/Emotion";
 import { ConversationPersistenceError, InvalidConversationIdError } from "@/lib/ai/errors";
 import type { ChatTurn } from "@/lib/ai/types";
 import type { EmotionLabel } from "@/lib/ai/emotion";
 import type { ConversationSummary, ConversationMessage } from "@/types/conversation";
+import type { ScheduleSummary } from "@/types/schedule";
 
 const RECENT_HISTORY_LIMIT = 20;
 const DEFAULT_CONVERSATION_LIST_LIMIT = 20;
@@ -71,6 +73,9 @@ interface SaveMessageParams {
   firebaseUid: string;
   role: MessageRole;
   content: string;
+  scheduleId?: string | mongoose.Types.ObjectId | null;
+  scheduleDate?: string | null;
+  scheduleSnapshot?: unknown;
 }
 
 /**
@@ -213,6 +218,25 @@ export async function listConversations(
   }
 }
 
+export async function updateMessageSchedule(
+  messageId: string,
+  scheduleData: {
+    scheduleId?: string | mongoose.Types.ObjectId | null;
+    scheduleDate?: string | null;
+    scheduleSnapshot?: unknown;
+  }
+): Promise<void> {
+  if (!mongoose.isValidObjectId(messageId)) return;
+  await connectToDatabase();
+  await MessageModel.findByIdAndUpdate(messageId, {
+    $set: {
+      scheduleId: scheduleData.scheduleId,
+      scheduleDate: scheduleData.scheduleDate,
+      scheduleSnapshot: scheduleData.scheduleSnapshot,
+    },
+  });
+}
+
 /**
  * Loads one conversation's metadata and a bounded, chronological
  * window of its messages — ONLY if it belongs to the authenticated
@@ -241,15 +265,55 @@ export async function getConversationWithMessages(
     const docs = await MessageModel.find({ conversationId }).sort({ createdAt: -1 }).limit(limit);
     const chronological = docs.reverse();
 
+    // Batch load any live schedules associated with timetable messages
+    const scheduleDates = Array.from(
+      new Set(
+        chronological
+          .map((d) => d.scheduleDate)
+          .filter((d): d is string => typeof d === "string" && Boolean(d))
+      )
+    );
+
+    const activeSchedules = scheduleDates.length > 0
+      ? await ScheduleModel.find({ firebaseUid, date: { $in: scheduleDates } })
+      : [];
+
+    const scheduleMap = new Map<string, ScheduleSummary>();
+    for (const s of activeSchedules) {
+      scheduleMap.set(s.date, {
+        id: String(s._id),
+        date: s.date,
+        items: s.items.map((i) => ({
+          start: i.start,
+          end: i.end,
+          title: i.title,
+          type: i.type,
+          taskId: i.taskId ? String(i.taskId) : null,
+        })),
+        createdAt: s.createdAt.toISOString(),
+        updatedAt: s.updatedAt.toISOString(),
+      });
+    }
+
     return {
       id: String(conversation._id),
       title: conversation.title,
-      messages: chronological.map((doc) => ({
-        id: String(doc._id),
-        role: toChatRole(doc.role),
-        text: doc.content,
-        createdAt: doc.createdAt.toISOString(),
-      })),
+      messages: chronological.map((doc) => {
+        let schedule: ScheduleSummary | null = null;
+        if (doc.scheduleDate && scheduleMap.has(doc.scheduleDate)) {
+          schedule = scheduleMap.get(doc.scheduleDate)!;
+        } else if (doc.scheduleSnapshot) {
+          schedule = doc.scheduleSnapshot as unknown as ScheduleSummary;
+        }
+
+        return {
+          id: String(doc._id),
+          role: toChatRole(doc.role),
+          text: doc.content,
+          createdAt: doc.createdAt.toISOString(),
+          schedule,
+        };
+      }),
     };
   } catch (error) {
     throw new ConversationPersistenceError("load conversation messages", error);

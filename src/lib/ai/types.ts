@@ -14,23 +14,29 @@ export type AgentIntent =
   | "conversation"
   | "planning"
   | "timetable_request"
+  | "timetable_save"
   | "task_request"
   | "mood_checkin"
   | "goal_discussion"
   | "reschedule_request"
   | "timetable_delete"
-  | "memory_request";
+  | "memory_request"
+  | "farewell"
+  | "welcome_back";
 
 export const AGENT_INTENTS: AgentIntent[] = [
   "conversation",
   "planning",
   "timetable_request",
+  "timetable_save",
   "task_request",
   "mood_checkin",
   "goal_discussion",
   "reschedule_request",
   "timetable_delete",
   "memory_request",
+  "farewell",
+  "welcome_back",
 ];
 
 export interface AgentAction {

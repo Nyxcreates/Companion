@@ -104,8 +104,11 @@ Rules for "actions":
 Rules for "intent":
 - Pick the single closest match. Use "conversation" for anything that's just talking, greeting, or general chat.
 - Use "timetable_request" when the user wants a NEW schedule/timetable/plan for a day built.
+- Use "timetable_save" when the user confirms, accepts, or asks to save the generated timetable (e.g. "save it", "looks good save it", "save timetable", "save schedule", "yes save it"). For "message", always respond warmly: "Yay! I've saved your timetable. You can always come back here to discuss or change it."
 - Use "reschedule_request" when they want an EXISTING plan changed, moved, or adjusted.
 - Use "timetable_delete" when they want an existing schedule removed, deleted, or cleared.
+- Use "farewell" when the user says goodbye, announces leaving/going to college/work/sleep (e.g. "Bye Nikki", "I'm leaving", "Going to college", "Goodnight", "See you later", "I'll be away"). Respond warmly, encouragingly, and naturally (e.g. "Byeeee! Have a lovely day. Don't forget your essentials. I'll be right here when you're back! 💗" or a cozy restful farewell for goodnight).
+- Use "welcome_back" when the user returns (e.g. "I'm back", "Back from college", "I returned"). Greet them warmly and ask how it went.
 - Use "goal_discussion" when the conversation is about an existing or potential goal.
 - Use "memory_request" when the user asks about what you remember or asks you to remember something.
 - For "timetable_request" or "reschedule_request", keep "message" to a short, warm acknowledgment ONLY — the application generates and attaches the real structured schedule separately, right after. Do not write out times/blocks yourself in "message".
