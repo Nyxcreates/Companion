@@ -143,10 +143,41 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
-  const reminderId = event.notification.data?.reminderId;
-  const uniqueKey = event.notification.data?.uniqueKey;
+  const reminderId      = event.notification.data?.reminderId;
+  const uniqueKey       = event.notification.data?.uniqueKey;
+  const breakSessionId  = event.notification.data?.breakSessionId;
 
-  // Background report action to server if reminder metadata is attached
+  // ── Break notification actions ────────────────────────────────────────────
+  if (breakSessionId) {
+    if (event.action === "break-extend") {
+      // User tapped "5 more minutes" on the break-end push
+      event.waitUntil(
+        fetch("/api/schedule/break/extend", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }).catch(() => {})
+      );
+      return; // Don't navigate
+    }
+    // "break-back" or plain click → open timetable
+    const url = event.notification.data?.url || "/plan?tab=schedule";
+    event.waitUntil(
+      self.clients
+        .matchAll({ type: "window", includeUncontrolled: true })
+        .then((windowClients) => {
+          for (const client of windowClients) {
+            if (client.url.includes(self.location.origin) && "focus" in client) {
+              client.navigate(url);
+              return client.focus();
+            }
+          }
+          if (self.clients.openWindow) return self.clients.openWindow(url);
+        })
+    );
+    return;
+  }
+
+  // ── Timetable reminder actions ────────────────────────────────────────────
   if (reminderId || uniqueKey) {
     const actionName = event.action || "click";
     event.waitUntil(

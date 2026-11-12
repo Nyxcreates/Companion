@@ -11,7 +11,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Sparkles, MessageCircle, X, Clock, Calendar, Minimize2, Move, Eye, Hand } from "lucide-react";
+import { Sparkles, MessageCircle, X, Clock, Calendar, Minimize2, Move, Eye, Hand, Coffee } from "lucide-react";
 import { useNotifications } from "@/context/NotificationContext";
 import { useProfile } from "@/context/ProfileContext";
 import { useAuth } from "@/context/AuthContext";
@@ -34,6 +34,8 @@ const LAST_CHAT_MESSAGE_KEY = "companion:last-chat-message-time";
 const TIMETABLE_ALERT_PREFIX = "companion:timetable-alerts:";
 /** sessionStorage key: user chose "Skip today" for timetable alerts */
 const TIMETABLE_SKIP_TODAY_KEY = "companion:timetable-skip-today";
+/** sessionStorage key: persists active break so page refresh doesn't forget it */
+const BREAK_SESSION_KEY = "companion:break-session";
 
 interface OpeningGreeting {
   id: string;
@@ -348,6 +350,16 @@ function pickGreetingVariant(
   return selected;
 }
 
+/** Serialisable break session state stored in sessionStorage */
+interface BreakSessionState {
+  id: string;
+  endsAt: string;          // ISO
+  extensionUsed: boolean;
+  extensionEndsAt: string | null;
+  nextTaskTitle: string | null;
+  durationMinutes: number;
+}
+
 export function NikkiProactivePresence() {
   const router = useRouter();
   const reduceMotion = useReducedMotion();
@@ -374,6 +386,16 @@ export function NikkiProactivePresence() {
   /** tracks which alert key is currently snoozed (suppressed until snoozeUntil ms) */
   const snoozeRef = useRef<{ key: string; until: number } | null>(null);
 
+  // ── Break mode engine ──────────────────────────────────────────────────────
+  const [activeBreak, setActiveBreak] = useState<BreakSessionState | null>(null);
+  const [breakEndAlert, setBreakEndAlert] = useState<{
+    message: string;
+    nextTaskTitle: string | null;
+    extensionUsed: boolean;
+  } | null>(null);
+  const [breakPickerOpen, setBreakPickerOpen] = useState(false);
+  const [customMinutesInput, setCustomMinutesInput] = useState("");
+
   // Restore minimized state from this browser session
   useEffect(() => {
     try {
@@ -384,6 +406,50 @@ export function NikkiProactivePresence() {
       // safe fallback
     }
   }, []);
+
+  // ── Restore active break from sessionStorage then server on mount ──────────
+  useEffect(() => {
+    if (!firebaseUser) return;
+    // 1. Fast restore from sessionStorage so UI doesn't flicker
+    try {
+      const raw = sessionStorage.getItem(BREAK_SESSION_KEY);
+      if (raw) {
+        const parsed: BreakSessionState = JSON.parse(raw);
+        const endsAtMs = new Date(parsed.extensionEndsAt ?? parsed.endsAt).getTime();
+        if (endsAtMs > Date.now()) {
+          setActiveBreak(parsed);
+        } else {
+          sessionStorage.removeItem(BREAK_SESSION_KEY);
+        }
+      }
+    } catch {
+      // safe fallback
+    }
+    // 2. Authoritative fetch from server (handles cross-tab / push-extended sessions)
+    authFetch("/api/schedule/break")
+      .then((res) => res.json())
+      .then((env) => {
+        const data = env?.data;
+        if (data) {
+          const session: BreakSessionState = {
+            id: data.id,
+            endsAt: data.endsAt,
+            extensionUsed: data.extensionUsed,
+            extensionEndsAt: data.extensionEndsAt ?? null,
+            nextTaskTitle: data.nextTaskTitle ?? null,
+            durationMinutes: data.durationMinutes,
+          };
+          try { sessionStorage.setItem(BREAK_SESSION_KEY, JSON.stringify(session)); } catch {}
+          setActiveBreak(session);
+        } else {
+          // Server says no active break — clear local state
+          try { sessionStorage.removeItem(BREAK_SESSION_KEY); } catch {}
+          setActiveBreak(null);
+        }
+      })
+      .catch(() => { /* best-effort */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firebaseUser]);
 
   // ── Load today's schedule once on mount or timezone change ─────────────────
   const fetchTodaySchedule = useCallback(() => {
@@ -408,11 +474,33 @@ export function NikkiProactivePresence() {
     return () => window.removeEventListener("companion:schedule-change", handleScheduleChange);
   }, [fetchTodaySchedule]);
 
-  // ── Minute-tick timetable alert engine ────────────────────────────────────
+  // ── Minute-tick: timetable alerts + break-end detection ──────────────────
   useEffect(() => {
     if (!firebaseUser) return;
 
     function tick() {
+      const now = Date.now();
+
+      // ── Break-end check (runs even during quiet hours for in-app bubble) ──
+      setActiveBreak((currentBreak) => {
+        if (!currentBreak) return currentBreak;
+        const effectiveEnd = new Date(currentBreak.extensionEndsAt ?? currentBreak.endsAt).getTime();
+        if (now >= effectiveEnd) {
+          // Break has ended — show in-app bubble
+          setBreakEndAlert({
+            message: currentBreak.nextTaskTitle
+              ? `Break's over! Ready to get back to "${currentBreak.nextTaskTitle}"? 💪`
+              : `Break time's up! Take it at your own pace — I'm here whenever you're ready ✨`,
+            nextTaskTitle: currentBreak.nextTaskTitle,
+            extensionUsed: currentBreak.extensionUsed,
+          });
+          try { sessionStorage.removeItem(BREAK_SESSION_KEY); } catch {}
+          return null; // clear active break
+        }
+        return currentBreak;
+      });
+
+      // ── Timetable alert gates ──────────────────────────────────────────────
       // Gate 1: proactive must be enabled
       if (preferences?.proactiveEnabled === false) return;
       // Gate 2: notifications must not be paused
@@ -425,6 +513,8 @@ export function NikkiProactivePresence() {
         (document.activeElement.tagName === "INPUT" ||
          document.activeElement.tagName === "TEXTAREA" ||
          (document.activeElement as HTMLElement).isContentEditable)) return;
+      // Gate 5: suppress timetable alerts while break is active
+      if (activeBreak) return;
 
       const dateStr = getTodayDateStr(tz);
       if (!todaySchedule) {
@@ -432,7 +522,7 @@ export function NikkiProactivePresence() {
         return;
       }
       if (snoozeRef.current) {
-        if (Date.now() < snoozeRef.current.until) {
+        if (now < snoozeRef.current.until) {
           return;
         }
         snoozeRef.current = null;
@@ -448,7 +538,7 @@ export function NikkiProactivePresence() {
     tick();
     const id = setInterval(tick, 60_000);
     return () => clearInterval(id);
-  }, [firebaseUser, todaySchedule, preferences, profile?.timezone, fetchTodaySchedule]);
+  }, [firebaseUser, todaySchedule, preferences, profile?.timezone, fetchTodaySchedule, activeBreak]);
 
   const handleRestoreFromDot = useCallback(() => {
     setIsMinimized(false);
@@ -492,6 +582,88 @@ export function NikkiProactivePresence() {
       }
     }, 2200);
   }, [userName]);
+
+  // ── Break session helpers ──────────────────────────────────────────────────
+  /** Returns the title of the next upcoming timetable item (for break context) */
+  const getNextTaskTitle = useCallback((): string | null => {
+    if (!todaySchedule) return null;
+    const tz = getUserTimezone(profile?.timezone);
+    const { totalMinutes } = getLocalMinutes(tz);
+    const upcoming = [...todaySchedule.items]
+      .filter((it) => it.type !== "break" && it.type !== "free" && it.start)
+      .sort((a, b) => {
+        const [ah, am] = a.start.split(":").map(Number);
+        const [bh, bm] = b.start.split(":").map(Number);
+        return ah * 60 + (am || 0) - (bh * 60 + (bm || 0));
+      })
+      .find((it) => {
+        const [h, m] = it.start.split(":").map(Number);
+        return h * 60 + (m || 0) > totalMinutes;
+      });
+    return upcoming?.title ?? null;
+  }, [todaySchedule, profile?.timezone]);
+
+  const handleStartBreak = useCallback(async (minutes: number) => {
+    setBreakPickerOpen(false);
+    setIsInteractiveOpen(false);
+    if (!firebaseUser) return;
+    const nextTaskTitle = getNextTaskTitle();
+    try {
+      const res = await authFetch("/api/schedule/break", {
+        method: "POST",
+        body: JSON.stringify({ durationMinutes: minutes, nextTaskTitle }),
+      });
+      const env = await res.json();
+      if (env?.data) {
+        const session: BreakSessionState = {
+          id: env.data.id,
+          endsAt: env.data.endsAt,
+          extensionUsed: env.data.extensionUsed,
+          extensionEndsAt: env.data.extensionEndsAt ?? null,
+          nextTaskTitle: env.data.nextTaskTitle ?? null,
+          durationMinutes: env.data.durationMinutes,
+        };
+        try { sessionStorage.setItem(BREAK_SESSION_KEY, JSON.stringify(session)); } catch {}
+        setActiveBreak(session);
+        setBreakEndAlert(null);
+        setTimetableAlert(null);
+        setOpeningGreeting(null);
+      }
+    } catch {
+      /* best-effort */
+    }
+  }, [firebaseUser, getNextTaskTitle]);
+
+  const handleExtendBreak = useCallback(async () => {
+    setBreakEndAlert(null);
+    if (!firebaseUser) return;
+    try {
+      const res = await authFetch("/api/schedule/break/extend", { method: "POST" });
+      const env = await res.json();
+      if (env?.data) {
+        const session: BreakSessionState = {
+          id: env.data.id,
+          endsAt: env.data.endsAt,
+          extensionUsed: env.data.extensionUsed,
+          extensionEndsAt: env.data.extensionEndsAt ?? null,
+          nextTaskTitle: env.data.nextTaskTitle ?? null,
+          durationMinutes: env.data.durationMinutes,
+        };
+        try { sessionStorage.setItem(BREAK_SESSION_KEY, JSON.stringify(session)); } catch {}
+        setActiveBreak(session);
+      }
+    } catch {
+      /* best-effort */
+    }
+  }, [firebaseUser]);
+
+  const handleCancelBreak = useCallback(async () => {
+    setBreakEndAlert(null);
+    setActiveBreak(null);
+    try { sessionStorage.removeItem(BREAK_SESSION_KEY); } catch {}
+    if (!firebaseUser) return;
+    authFetch("/api/schedule/break", { method: "DELETE" }).catch(() => {});
+  }, [firebaseUser]);
 
   // Listen to companion state change events triggered by chat intent interactions (goodbye, return, sleep, break)
   useEffect(() => {
@@ -1167,6 +1339,10 @@ export function NikkiProactivePresence() {
     companionPose = activeSignal.pose;
   } else if (activeCheckIn) {
     companionPose = mapGuidePoseToCompanionPose(activeCheckIn.characterPose);
+  } else if (breakEndAlert) {
+    companionPose = "wave";
+  } else if (activeBreak) {
+    companionPose = "sleepy"; // Nikki rests during your break
   } else if (timetableAlert) {
     companionPose = timetableAlert.pose;
   } else if (openingGreeting) {
@@ -1184,6 +1360,17 @@ export function NikkiProactivePresence() {
     payload?: string,
     interventionType?: string
   ) => {
+    // ── Break-end alert specific actions ──────────────────────────────────────
+    if (breakEndAlert) {
+      if (action === "accept" && payload === "extend") {
+        await handleExtendBreak();
+        return;
+      }
+      // "Back to it" / "Still on break" / dismiss → just close the alert
+      setBreakEndAlert(null);
+      return;
+    }
+
     // ── Timetable alert specific actions ──────────────────────────────────────
     if (timetableAlert) {
       const userTz = getUserTimezone(profile?.timezone);
@@ -1292,7 +1479,7 @@ export function NikkiProactivePresence() {
   };
 
   // Determine which speech bubble is active:
-  // priority: server check-in > timetable alert > opening greeting
+  // priority: server check-in > break-end alert > timetable alert > opening greeting
   const displayedMessage = activeCheckIn
     ? {
         title: companionName,
@@ -1302,30 +1489,51 @@ export function NikkiProactivePresence() {
         isServerCheckIn: true,
         isTimetableAlert: false,
       }
-    : timetableAlert
+    : breakEndAlert
       ? {
           title: companionName,
-          message: timetableAlert.message,
-          subText: timetableAlert.subText,
-          actions: [
-            { label: "OK", action: "dismiss" as const, variant: "primary" as const },
-            { label: "Snooze 10 min", action: "snooze" as const, variant: "secondary" as const },
-            { label: "Skip today", action: "skip-today" as const, variant: "ghost" as const },
-            { label: "View Timetable", action: "accept" as const, payload: "/plan?tab=schedule", variant: "ghost" as const },
-          ],
+          message: breakEndAlert.message,
+          subText: breakEndAlert.nextTaskTitle
+            ? "Tap 'Back to it' when you're ready, or take 5 more minutes 🌙"
+            : "No rush at all — whenever you feel ready! ✨",
+          actions: breakEndAlert.extensionUsed
+            ? [
+                // Already extended once — just offer back-to-it
+                { label: "Back to it 💪", action: "dismiss" as const, variant: "primary" as const },
+                { label: "Still on break", action: "dismiss" as const, variant: "ghost" as const },
+              ]
+            : [
+                { label: "Back to it 💪", action: "dismiss" as const, variant: "primary" as const },
+                { label: "5 more minutes", action: "accept" as const, payload: "extend", variant: "secondary" as const },
+                { label: "Still on break", action: "dismiss" as const, variant: "ghost" as const },
+              ],
           isServerCheckIn: false,
-          isTimetableAlert: true,
+          isTimetableAlert: false,
         }
-      : openingGreeting
+      : timetableAlert
         ? {
             title: companionName,
-            message: openingGreeting.message,
-            subText: openingGreeting.subText,
-            actions: openingGreeting.actions,
+            message: timetableAlert.message,
+            subText: timetableAlert.subText,
+            actions: [
+              { label: "OK", action: "dismiss" as const, variant: "primary" as const },
+              { label: "Snooze 10 min", action: "snooze" as const, variant: "secondary" as const },
+              { label: "Skip today", action: "skip-today" as const, variant: "ghost" as const },
+              { label: "View Timetable", action: "accept" as const, payload: "/plan?tab=schedule", variant: "ghost" as const },
+            ],
             isServerCheckIn: false,
-            isTimetableAlert: false,
+            isTimetableAlert: true,
           }
-        : null;
+        : openingGreeting
+          ? {
+              title: companionName,
+              message: openingGreeting.message,
+              subText: openingGreeting.subText,
+              actions: openingGreeting.actions,
+              isServerCheckIn: false,
+              isTimetableAlert: false,
+            }
+          : null;
 
   return (
     <motion.div
@@ -1369,7 +1577,7 @@ export function NikkiProactivePresence() {
       <AnimatePresence>
         {displayedMessage && !goodbyeMessage && !isMinimized && !isTyping && (
           <motion.div
-            key={activeCheckIn?.id || openingGreeting?.id || "bubble"}
+            key={activeCheckIn?.id || (breakEndAlert ? "break-end" : undefined) || openingGreeting?.id || "bubble"}
             initial={{ opacity: 0, y: 16, scale: 0.92 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.92 }}
@@ -1388,7 +1596,7 @@ export function NikkiProactivePresence() {
                   {displayedMessage.title}
                 </span>
                 <span className="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] text-cyan-300/80 font-mono">
-                  {activeCheckIn ? "Check-in" : timetableAlert ? "Schedule" : "Greetings"}
+                  {activeCheckIn ? "Check-in" : breakEndAlert ? "Break Over" : timetableAlert ? "Schedule" : "Greetings"}
                 </span>
               </div>
               <div className="flex items-center gap-1">
@@ -1564,6 +1772,35 @@ export function NikkiProactivePresence() {
                 <span>Start Focus Session</span>
               </Button>
 
+              {/* Break mode — show "End break" if one is active, otherwise "Take a break" */}
+              {activeBreak ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setIsInteractiveOpen(false);
+                    handleCancelBreak();
+                  }}
+                  className="text-xs justify-start h-8 text-amber-300/90 hover:text-white hover:bg-amber-500/10"
+                >
+                  <Coffee className="h-3.5 w-3.5 mr-2 text-amber-400" />
+                  <span>End break early</span>
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setBreakPickerOpen(true);
+                    setIsInteractiveOpen(false);
+                  }}
+                  className="text-xs justify-start h-8 text-amber-300/90 hover:text-white hover:bg-amber-500/10"
+                >
+                  <Coffee className="h-3.5 w-3.5 mr-2 text-amber-400" />
+                  <span>Take a break</span>
+                </Button>
+              )}
+
               <div className="border-t border-white/10 pt-2 flex items-center justify-between text-[11px] text-ink-muted">
                 <button
                   type="button"
@@ -1574,6 +1811,82 @@ export function NikkiProactivePresence() {
                 </button>
                 <span className="text-ink-muted/50">Draggable</span>
               </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Break Picker Panel */}
+      <AnimatePresence>
+        {breakPickerOpen && !isMinimized && !isTyping && (
+          <motion.div
+            initial={{ opacity: 0, y: 16, scale: 0.92 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.92 }}
+            transition={
+              reduceMotion
+                ? { duration: 0.1 }
+                : { type: "spring", damping: 22, stiffness: 280 }
+            }
+            className="pointer-events-auto mb-3 w-[calc(100vw-2rem)] sm:w-80 rounded-2xl border border-amber-400/35 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-xl"
+          >
+            <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-3">
+              <div className="flex items-center gap-1.5">
+                <Coffee className="h-3.5 w-3.5 text-amber-400" />
+                <span className="font-mono text-xs font-semibold text-amber-300">Break time</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBreakPickerOpen(false)}
+                className="rounded-md p-1 text-ink-muted hover:bg-white/10 hover:text-white transition-colors"
+                title="Cancel"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            <p className="font-display text-sm font-medium text-white leading-relaxed mb-3">
+              How long do you need? I&apos;ll stay quiet until then 🌙
+            </p>
+
+            {/* Preset buttons */}
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              {[15, 30, 60].map((mins) => (
+                <Button
+                  key={mins}
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => handleStartBreak(mins)}
+                  className="text-xs h-9 font-medium"
+                >
+                  {mins} min
+                </Button>
+              ))}
+            </div>
+
+            {/* Custom duration */}
+            <div className="flex gap-2">
+              <input
+                type="number"
+                min={1}
+                max={480}
+                placeholder="Custom (min)"
+                value={customMinutesInput}
+                onChange={(e) => setCustomMinutesInput(e.target.value)}
+                className="flex-1 rounded-lg bg-white/5 border border-white/10 px-3 py-1.5 text-sm text-white placeholder-ink-muted focus:outline-none focus:border-amber-400/60 focus:ring-1 focus:ring-amber-400/30"
+              />
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={!customMinutesInput || Number(customMinutesInput) < 1}
+                onClick={() => {
+                  const mins = parseInt(customMinutesInput, 10);
+                  if (mins >= 1) handleStartBreak(mins);
+                }}
+                className="text-xs px-3 h-auto bg-amber-500 hover:bg-amber-400 border-amber-400 text-slate-950"
+              >
+                Go
+              </Button>
             </div>
           </motion.div>
         )}
@@ -1622,12 +1935,16 @@ export function NikkiProactivePresence() {
                   <CompanionCharacter pose={companionPose} className="h-full w-full" />
                 </div>
 
-                {/* Active check-in alert badge */}
-                {(activeCheckIn || openingGreeting) && (
+                {/* Active check-in / break-end alert badge */}
+                {activeBreak && !breakEndAlert ? (
+                  <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-400 shadow-md" title="Break active">
+                    <Coffee className="h-2.5 w-2.5 text-slate-950" />
+                  </span>
+                ) : (activeCheckIn || openingGreeting || breakEndAlert) ? (
                   <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-cyan-400 text-[10px] text-slate-950 font-bold shadow-md animate-bounce">
                     !
                   </span>
-                )}
+                ) : null}
 
                 {/* Subtle drag handle indicator on hover */}
                 <div className="absolute -bottom-1 inset-x-0 flex justify-center opacity-0 group-hover:opacity-75 transition-opacity">

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dispatchDueTimetableReminders } from "@/services/timetableReminderService";
+import { dispatchDueBreaks } from "@/services/breakSessionService";
 
 export const runtime = "nodejs";
 
@@ -27,11 +28,15 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const result = await dispatchDueTimetableReminders();
+    const [timetableResult, breakResult] = await Promise.all([
+      dispatchDueTimetableReminders(),
+      dispatchDueBreaks(),
+    ]);
 
     return NextResponse.json({
       data: {
-        ...result,
+        ...timetableResult,
+        breaks: breakResult,
         timestamp: new Date().toISOString(),
       },
     });
