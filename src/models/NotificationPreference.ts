@@ -4,6 +4,7 @@ import type {
   CheckInFrequency,
   FloatingPresenceMode,
   LearnedInterventionWeights,
+  NikkiStrictness,
 } from "@/types/notification";
 
 export type {
@@ -11,6 +12,7 @@ export type {
   CheckInFrequency,
   FloatingPresenceMode,
   LearnedInterventionWeights,
+  NikkiStrictness,
 };
 
 export interface NotificationPreferenceDocument extends Document {
@@ -26,6 +28,8 @@ export interface NotificationPreferenceDocument extends Document {
   dailyPhoneGoalMinutes: number;
   pausedUntil: Date | null;
   learnedWeights: LearnedInterventionWeights;
+  strictness: NikkiStrictness;
+  lastSeenAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -63,6 +67,12 @@ const NotificationPreferenceSchema = new Schema<NotificationPreferenceDocument>(
     waterIntervalMinutes: { type: Number, default: 90 },
     dailyPhoneGoalMinutes: { type: Number, default: 120 },
     pausedUntil: { type: Date, default: null },
+    strictness: {
+      type: String,
+      enum: ["gentle", "playful", "firm"],
+      default: "playful",
+    },
+    lastSeenAt: { type: Date, default: null },
     learnedWeights: {
       waterDismissCount: { type: Number, default: 0 },
       waterAcceptCount: { type: Number, default: 0 },

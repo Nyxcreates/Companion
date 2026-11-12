@@ -2,6 +2,7 @@ import type { NotificationCategory } from "@/lib/notifications/categories";
 
 export type CheckInFrequency = "gentle" | "balanced" | "frequent";
 export type FloatingPresenceMode = "always" | "subtle" | "off";
+export type NikkiStrictness = "gentle" | "playful" | "firm";
 
 export interface LearnedInterventionWeights {
   waterDismissCount: number;
@@ -41,6 +42,8 @@ export interface NotificationPreferences {
   dailyPhoneGoalMinutes: number;
   pausedUntil: string | null;
   learnedWeights: LearnedInterventionWeights;
+  strictness?: NikkiStrictness;
+  lastSeenAt?: string | null;
 }
 
 export interface CheckInTrigger {

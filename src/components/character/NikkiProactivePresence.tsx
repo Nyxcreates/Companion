@@ -451,6 +451,17 @@ export function NikkiProactivePresence() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [firebaseUser]);
 
+  // ── Heartbeat: updates lastSeenAt on server while app is open ──────────────
+  useEffect(() => {
+    if (!firebaseUser) return;
+    const sendHeartbeat = () => {
+      authFetch("/api/nikki/heartbeat", { method: "POST" }).catch(() => {});
+    };
+    sendHeartbeat();
+    const interval = setInterval(sendHeartbeat, 5 * 60 * 1000); // every 5 minutes
+    return () => clearInterval(interval);
+  }, [firebaseUser]);
+
   // ── Load today's schedule once on mount or timezone change ─────────────────
   const fetchTodaySchedule = useCallback(() => {
     if (!firebaseUser) return;

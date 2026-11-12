@@ -81,6 +81,8 @@ function docToPreferences(doc: NotificationPreferenceDocument): NotificationPref
     waterIntervalMinutes: doc.waterIntervalMinutes ?? 90,
     dailyPhoneGoalMinutes: doc.dailyPhoneGoalMinutes ?? 120,
     pausedUntil: doc.pausedUntil ? doc.pausedUntil.toISOString() : null,
+    strictness: doc.strictness ?? "playful",
+    lastSeenAt: doc.lastSeenAt ? doc.lastSeenAt.toISOString() : null,
     learnedWeights: {
       waterDismissCount: doc.learnedWeights?.waterDismissCount ?? 0,
       waterAcceptCount: doc.learnedWeights?.waterAcceptCount ?? 0,
@@ -121,6 +123,12 @@ export async function updatePreferences(
   if (updates.dailyPhoneGoalMinutes !== undefined) doc.dailyPhoneGoalMinutes = updates.dailyPhoneGoalMinutes;
   if (updates.pausedUntil !== undefined) {
     doc.pausedUntil = updates.pausedUntil ? new Date(updates.pausedUntil) : null;
+  }
+  if (updates.strictness !== undefined) {
+    doc.strictness = updates.strictness;
+  }
+  if (updates.lastSeenAt !== undefined) {
+    doc.lastSeenAt = updates.lastSeenAt ? new Date(updates.lastSeenAt) : null;
   }
   if (updates.categoriesEnabled !== undefined) {
     doc.categoriesEnabled = updates.categoriesEnabled as any;
