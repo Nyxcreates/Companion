@@ -11,7 +11,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Sparkles, MessageCircle, X, Clock, Calendar, Minimize2, Move, Eye, Hand, Coffee, Mic, MicOff, Send, BellOff } from "lucide-react";
+import { Sparkles, MessageCircle, X, Minimize2, Move, Coffee, Mic, MicOff, Send, BellOff } from "lucide-react";
 import { useNotifications } from "@/context/NotificationContext";
 import { useProfile } from "@/context/ProfileContext";
 import { useAuth } from "@/context/AuthContext";
@@ -386,6 +386,7 @@ export function NikkiProactivePresence() {
   const [isMinimized, setIsMinimized] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  // isInteractiveOpen is kept for the break and bye helpers that still reference it
   const [isInteractiveOpen, setIsInteractiveOpen] = useState(false);
   const [openingGreeting, setOpeningGreeting] = useState<OpeningGreeting | null>(null);
   const [activeSignal, setActiveSignal] = useState<{ state: string; pose: CompanionPose } | null>(null);
@@ -417,6 +418,8 @@ export function NikkiProactivePresence() {
   const [inputText, setInputText] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [isTtsEnabled, setIsTtsEnabled] = useState(false);
+  const bubbleEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
 
   // Restore minimized state from this browser session
@@ -495,16 +498,21 @@ export function NikkiProactivePresence() {
       const env = await res.json();
       if (env?.data) {
         setActiveNudge(env.data);
-        setBubbleConversation([
-          { id: env.data.id, role: "nikki", content: env.data.message },
-        ]);
+        // Only open/reset the bubble if it isn't already in an active conversation
+        setBubbleConversation((prev) => {
+          if (prev.length > 0 && isConversationalOpen) {
+            // Append the new nudge as a Nikki message to ongoing conversation
+            return [...prev, { id: env.data.id, role: "nikki" as const, content: env.data.message }];
+          }
+          return [{ id: env.data.id, role: "nikki" as const, content: env.data.message }];
+        });
         setIsConversationalOpen(true);
         setIsMinimized(false);
       }
     } catch {
       /* best-effort */
     }
-  }, [firebaseUser]);
+  }, [firebaseUser, isConversationalOpen]);
 
   useEffect(() => {
     if (!firebaseUser) return;
@@ -867,9 +875,20 @@ export function NikkiProactivePresence() {
             { id: `nikki_${Date.now()}`, role: "nikki", content: env.data.reply },
           ]);
 
-          // Talking animation reaction
-          setActiveSignal({ state: "talking", pose: "happy" });
+          // Update character pose from API if present
+          const apiPose = env.data.pose as CompanionPose | undefined;
+          const talkingPose: CompanionPose = apiPose || "happy";
+          setActiveSignal({ state: "talking", pose: talkingPose });
           setTimeout(() => setActiveSignal(null), 3000);
+
+          // TTS: speak the reply if enabled
+          if (isTtsEnabled && typeof window !== "undefined" && window.speechSynthesis) {
+            window.speechSynthesis.cancel();
+            const utt = new SpeechSynthesisUtterance(env.data.reply.replace(/[*_~`]/g, ""));
+            utt.rate = 1.05;
+            utt.pitch = 1.1;
+            window.speechSynthesis.speak(utt);
+          }
 
           // If timetable was modified, emit event so timetable UI syncs
           if (env.data.schedule || env.data.intent === "timetable_delete") {
@@ -889,7 +908,7 @@ export function NikkiProactivePresence() {
         setIsSubmitting(false);
       }
     },
-    [inputText, isSubmitting, activeNudge?.id, profile?.timezone, handleByeNikki]
+    [inputText, isSubmitting, activeNudge?.id, profile?.timezone, handleByeNikki, isTtsEnabled]
   );
 
   const handleDismissBubble = useCallback(async () => {
@@ -917,6 +936,13 @@ export function NikkiProactivePresence() {
       });
     } catch {}
   }, [activeNudge?.id]);
+
+  // Auto-scroll bubble to bottom when new messages appear
+  useEffect(() => {
+    if (isConversationalOpen && bubbleEndRef.current) {
+      bubbleEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [bubbleConversation, isConversationalOpen]);
 
   // Listen to companion state change events triggered by chat intent interactions (goodbye, return, sleep, break)
   useEffect(() => {
@@ -1600,8 +1626,8 @@ export function NikkiProactivePresence() {
     companionPose = timetableAlert.pose;
   } else if (openingGreeting) {
     companionPose = openingGreeting.pose;
-  } else if (isInteractiveOpen) {
-    companionPose = "wave";
+  } else if (isConversationalOpen) {
+    companionPose = "curious";
   } else if (isLateNight) {
     companionPose = "sleepy";
   } else if (currentHour >= 6 && currentHour < 12) {
@@ -1674,6 +1700,17 @@ export function NikkiProactivePresence() {
     if (action === "talk") {
       if (activeCheckIn) {
         await respondToCheckIn("talk", interventionType);
+        setOpeningGreeting(null);
+        router.push("/dashboard");
+        return;
+      }
+      // Convert proactive greeting bubble into conversational bubble
+      if (openingGreeting) {
+        const initContent = openingGreeting.message;
+        setOpeningGreeting(null);
+        setBubbleConversation([{ id: `nikki_greet_${Date.now()}`, role: "nikki", content: initContent }]);
+        setIsConversationalOpen(true);
+        return;
       }
       setOpeningGreeting(null);
       router.push("/dashboard");
@@ -1723,12 +1760,46 @@ export function NikkiProactivePresence() {
     }
 
     if (displayedMessage) {
-      // Tapping her opens the chat
-      handleAction("talk", undefined, activeCheckIn?.interventionType);
+      // A proactive greeting / check-in is showing — tapping converts it into the conversational bubble
+      setOpeningGreeting(null);
+      const initMsg = displayedMessage.message;
+      setBubbleConversation([{ id: `nikki_init_${Date.now()}`, role: "nikki", content: initMsg }]);
+      setIsConversationalOpen(true);
       return;
     }
 
-    setIsInteractiveOpen((prev) => !prev);
+    if (isConversationalOpen) {
+      // Bubble already open — close it
+      setIsConversationalOpen(false);
+      return;
+    }
+
+    // Open conversational bubble with a context-aware check-in line
+    const h = new Date().getHours();
+    const initLines =
+      h >= 23 || h < 5
+        ? [
+            `Still up, ${userName}? 🌙 How are you holding up right now?`,
+            `Late night, huh? Everything okay? I'm right here with you. 💙`,
+          ]
+        : h < 12
+        ? [
+            `Hey ${userName}! Good morning 🌅 — how are you feeling today?`,
+            `Morning! What's on your mind today? Want to plan something out?`,
+          ]
+        : h < 18
+        ? [
+            `Hey ${userName}! How's the afternoon treating you? Need anything?`,
+            `Just checking in — how's everything going right now? 🌿`,
+          ]
+        : [
+            `Evening, ${userName}! How did today go? Want to reflect or just chat?`,
+            `Hey! Hope your evening is peaceful. What's on your mind?`,
+          ];
+    const line = initLines[Math.floor(Math.random() * initLines.length)];
+    setBubbleConversation([{ id: `nikki_tap_${Date.now()}`, role: "nikki", content: line }]);
+    setActiveNudge(null);
+    setIsConversationalOpen(true);
   };
 
   // Determine which speech bubble is active:
@@ -1916,10 +1987,11 @@ export function NikkiProactivePresence() {
         )}
       </AnimatePresence>
 
-      {/* Speech Bubble: User-Tapped Quick Interaction Menu */}
+      {/* Conversational Bubble — tap-to-talk / proactive nudges */}
       <AnimatePresence>
-        {!displayedMessage && !goodbyeMessage && isInteractiveOpen && !isMinimized && !isTyping && (
+        {!displayedMessage && !goodbyeMessage && (isConversationalOpen || (activeNudge && !isConversationalOpen)) && !isMinimized && !isTyping && (
           <motion.div
+            key="convo-bubble"
             initial={{ opacity: 0, y: 16, scale: 0.92 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.92 }}
@@ -1928,142 +2000,221 @@ export function NikkiProactivePresence() {
                 ? { duration: 0.1 }
                 : { type: "spring", damping: 22, stiffness: 280 }
             }
-            className="pointer-events-auto mb-3 w-[calc(100vw-2rem)] sm:w-80 rounded-2xl border border-cyan-400/35 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-xl"
+            className="pointer-events-auto mb-3 w-[calc(100vw-2rem)] sm:w-80 md:w-96 max-w-sm rounded-2xl border border-cyan-400/35 bg-slate-900/95 shadow-2xl backdrop-blur-xl flex flex-col overflow-hidden"
           >
-            <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2.5">
-              <div className="flex items-center gap-1.5">
-                <span className="flex h-2 w-2 rounded-full bg-cyan-400" />
-                <span className="font-mono text-xs font-semibold text-cyan-300">
-                  {companionName}
-                </span>
-                <span className="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] text-cyan-300/80 font-mono">
-                  Menu
+            {/* ── Header ───────────────────────────────────────────────────── */}
+            <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="flex h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
+                <span className="font-mono text-xs font-semibold text-cyan-300">{companionName}</span>
+                <span className="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] text-cyan-300/80 font-mono capitalize">
+                  {activeNudge?.trigger === "late_night"
+                    ? "🌙 Late night"
+                    : activeNudge?.trigger === "morning_plan" || activeNudge?.trigger === "no_timetable"
+                    ? "✨ Planning"
+                    : activeNudge?.trigger === "task_overdue"
+                    ? "💡 Check-in"
+                    : activeNudge?.trigger === "long_session"
+                    ? "☕ Break?"
+                    : activeNudge?.trigger === "goal_neglected"
+                    ? "💗 Goals"
+                    : activeNudge?.trigger === "caring_frustration"
+                    ? "🤔 Honest moment"
+                    : "💬 Chat"}
                 </span>
               </div>
               <div className="flex items-center gap-1">
+                {/* TTS toggle */}
                 <button
                   type="button"
                   onClick={() => {
+                    setIsTtsEnabled((v) => !v);
+                    if (isTtsEnabled && typeof window !== "undefined") {
+                      window.speechSynthesis?.cancel();
+                    }
+                  }}
+                  className={`rounded-md p-1 transition-colors ${
+                    isTtsEnabled ? "text-cyan-300 bg-cyan-400/10" : "text-ink-muted hover:text-white hover:bg-white/10"
+                  }`}
+                  title={isTtsEnabled ? "Mute voice" : "Enable voice"}
+                  aria-label={isTtsEnabled ? "Mute Nikki's voice" : "Enable Nikki's voice"}
+                >
+                  <span className="text-[11px] font-mono select-none">{isTtsEnabled ? "🔊" : "🔇"}</span>
+                </button>
+                {/* Mute 2h */}
+                <button
+                  type="button"
+                  onClick={handleMuteForNow}
+                  className="rounded-md p-1 text-ink-muted hover:bg-white/10 hover:text-white transition-colors"
+                  title="Quiet for 2 hours"
+                  aria-label="Quiet for 2 hours"
+                >
+                  <BellOff className="h-3.5 w-3.5" />
+                </button>
+                {/* Minimize */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsConversationalOpen(false);
                     setIsMinimized(true);
-                    try {
-                      sessionStorage.setItem(MINIMIZED_STORAGE_KEY, "true");
-                    } catch {}
+                    try { sessionStorage.setItem(MINIMIZED_STORAGE_KEY, "true"); } catch {}
                   }}
                   className="rounded-md p-1 text-ink-muted hover:bg-white/10 hover:text-white transition-colors"
                   title="Minimize"
+                  aria-label="Minimize"
                 >
                   <Minimize2 className="h-3.5 w-3.5" />
                 </button>
+                {/* Close bubble */}
                 <button
                   type="button"
-                  onClick={() => setIsInteractiveOpen(false)}
+                  onClick={() => setIsConversationalOpen(false)}
                   className="rounded-md p-1 text-ink-muted hover:bg-white/10 hover:text-white transition-colors"
                   title="Close"
+                  aria-label="Close"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
             </div>
 
-            <p className="font-display text-sm font-medium text-white leading-relaxed">
-              {isLateNight
-                ? `It's late, ${userName}! Make sure to take care of yourself and rest soon.`
-                : currentHour < 12
-                  ? `Good morning, ${userName}! I'm here with you—ready to tackle the day?`
-                  : currentHour < 18
-                    ? `Hope your day is flowing nicely, ${userName}. Need to plan or focus on anything?`
-                    : `Evening, ${userName}! How are you feeling right now?`}
-            </p>
-
-            <div className="mt-3.5 flex flex-col gap-1.5">
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() => {
-                  setIsInteractiveOpen(false);
-                  router.push("/dashboard");
-                }}
-                className="text-xs justify-start h-8"
-              >
-                <MessageCircle className="h-3.5 w-3.5 mr-2" />
-                <span>Chat with {companionName}</span>
-              </Button>
-
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleByeNikki}
-                className="text-xs justify-start h-8 text-cyan-200/90 hover:text-white hover:bg-white/10"
-              >
-                <Hand className="h-3.5 w-3.5 mr-2 text-cyan-400" />
-                <span>Bye {companionName}</span>
-              </Button>
-
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  setIsInteractiveOpen(false);
-                  router.push("/plan?tab=schedule");
-                }}
-                className="text-xs justify-start h-8"
-              >
-                <Calendar className="h-3.5 w-3.5 mr-2" />
-                <span>Today's Timetable</span>
-              </Button>
-
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setIsInteractiveOpen(false);
-                  router.push("/focus");
-                }}
-                className="text-xs justify-start h-8"
-              >
-                <Sparkles className="h-3.5 w-3.5 mr-2" />
-                <span>Start Focus Session</span>
-              </Button>
-
-              {/* Break mode — show "End break" if one is active, otherwise "Take a break" */}
-              {activeBreak ? (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    setIsInteractiveOpen(false);
-                    handleCancelBreak();
-                  }}
-                  className="text-xs justify-start h-8 text-amber-300/90 hover:text-white hover:bg-amber-500/10"
+            {/* ── Message Thread ────────────────────────────────────────────── */}
+            <div className="flex-1 overflow-y-auto max-h-64 px-4 py-3 space-y-2.5 scrollbar-thin scrollbar-thumb-white/10">
+              {bubbleConversation.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                 >
-                  <Coffee className="h-3.5 w-3.5 mr-2 text-amber-400" />
-                  <span>End break early</span>
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    setBreakPickerOpen(true);
-                    setIsInteractiveOpen(false);
-                  }}
-                  className="text-xs justify-start h-8 text-amber-300/90 hover:text-white hover:bg-amber-500/10"
-                >
-                  <Coffee className="h-3.5 w-3.5 mr-2 text-amber-400" />
-                  <span>Take a break</span>
-                </Button>
+                  <div
+                    className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
+                      msg.role === "user"
+                        ? "bg-cyan-500/20 text-cyan-100 rounded-br-sm"
+                        : "bg-white/8 text-white rounded-bl-sm"
+                    }`}
+                  >
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+              {isSubmitting && (
+                <div className="flex justify-start">
+                  <div className="rounded-2xl rounded-bl-sm bg-white/8 px-3 py-2 text-sm text-ink-muted">
+                    <span className="inline-flex gap-1 items-center">
+                      <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-bounce [animation-delay:0ms]" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-bounce [animation-delay:150ms]" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-bounce [animation-delay:300ms]" />
+                    </span>
+                  </div>
+                </div>
               )}
+              <div ref={bubbleEndRef} />
+            </div>
 
-              <div className="border-t border-white/10 pt-2 flex items-center justify-between text-[11px] text-ink-muted">
-                <button
-                  type="button"
-                  onClick={() => setIsDismissed(true)}
-                  className="hover:text-rose-400 transition-colors"
-                >
-                  Hide for now
-                </button>
-                <span className="text-ink-muted/50">Draggable</span>
+            {/* ── Quick Reply Pills ─────────────────────────────────────────── */}
+            {quickReplyChips.length > 0 && !isSubmitting && (
+              <div className="px-4 pb-2 flex flex-wrap gap-1.5">
+                {quickReplyChips.map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    onClick={() => handleSendReply(chip)}
+                    className="rounded-full border border-cyan-400/30 bg-cyan-400/8 px-2.5 py-1 text-[11px] font-medium text-cyan-200 hover:bg-cyan-400/20 hover:border-cyan-400/60 transition-all"
+                  >
+                    {chip}
+                  </button>
+                ))}
               </div>
+            )}
+
+            {/* ── Contextual Actions (break / focus / schedule) ─────────────── */}
+            <div className="px-4 pb-2 flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => { setIsConversationalOpen(false); setBreakPickerOpen(true); }}
+                className="rounded-full border border-amber-400/25 bg-amber-400/8 px-2.5 py-1 text-[11px] font-medium text-amber-300/80 hover:bg-amber-400/20 hover:border-amber-400/50 transition-all"
+                title="Start a break"
+              >
+                ☕ Break
+              </button>
+              <button
+                type="button"
+                onClick={() => { setIsConversationalOpen(false); router.push("/focus"); }}
+                className="rounded-full border border-violet-400/25 bg-violet-400/8 px-2.5 py-1 text-[11px] font-medium text-violet-300/80 hover:bg-violet-400/20 hover:border-violet-400/50 transition-all"
+                title="Focus session"
+              >
+                ✨ Focus
+              </button>
+              <button
+                type="button"
+                onClick={() => { setIsConversationalOpen(false); router.push("/plan?tab=schedule"); }}
+                className="rounded-full border border-teal-400/25 bg-teal-400/8 px-2.5 py-1 text-[11px] font-medium text-teal-300/80 hover:bg-teal-400/20 hover:border-teal-400/50 transition-all"
+                title="Today's timetable"
+              >
+                📅 Timetable
+              </button>
+              <button
+                type="button"
+                onClick={handleByeNikki}
+                className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-ink-muted hover:bg-white/10 hover:text-white transition-all"
+                title={`Bye ${companionName}`}
+              >
+                👋 Bye
+              </button>
+            </div>
+
+            {/* ── Footer: Input + Voice + Send ─────────────────────────────── */}
+            <div className="border-t border-white/10 px-3 py-2.5 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={toggleVoice}
+                className={`flex-shrink-0 rounded-full p-1.5 transition-colors ${
+                  isListening
+                    ? "bg-rose-500/20 text-rose-400 ring-1 ring-rose-400/50 animate-pulse"
+                    : "text-ink-muted hover:text-cyan-300 hover:bg-white/10"
+                }`}
+                title={isListening ? "Stop listening" : "Voice input"}
+                aria-label={isListening ? "Stop listening" : "Voice input"}
+              >
+                {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+              </button>
+
+              <input
+                type="text"
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendReply();
+                  }
+                }}
+                placeholder={isListening ? "Listening…" : `Message ${companionName}…`}
+                className="flex-1 min-w-0 rounded-xl bg-white/5 border border-white/10 px-3 py-1.5 text-sm text-white placeholder-ink-muted focus:outline-none focus:border-cyan-400/60 focus:ring-1 focus:ring-cyan-400/30 transition-colors"
+                aria-label={`Message ${companionName}`}
+              />
+
+              <button
+                type="button"
+                onClick={() => handleSendReply()}
+                disabled={!inputText.trim() || isSubmitting}
+                className="flex-shrink-0 rounded-full bg-cyan-500 p-1.5 text-slate-950 hover:bg-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                aria-label="Send message"
+                title="Send"
+              >
+                <Send className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Footer hint */}
+            <div className="px-4 pb-2 flex items-center justify-between text-[10px] text-ink-muted/60">
+              <button
+                type="button"
+                onClick={() => setIsDismissed(true)}
+                className="hover:text-rose-400 transition-colors"
+              >
+                Hide for now
+              </button>
+              <span>Draggable · Enter to send</span>
             </div>
           </motion.div>
         )}

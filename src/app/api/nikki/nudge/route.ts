@@ -30,6 +30,16 @@ export async function GET(request: NextRequest) {
       await nudge.save();
     }
 
+    const trigger = nudge.trigger;
+    const meta = (nudge.metadata || {}) as Record<string, unknown>;
+    let pose = "happy";
+    if (trigger === "focus_finished") pose = "celebrate";
+    else if (trigger === "late_night" || trigger === "unusually_late") pose = "sleepy";
+    else if (trigger === "task_overdue" || trigger === "activity_missed" || meta.isCaringFrustration) pose = "concerned";
+    else if (trigger === "goal_neglected" && meta.isCaringFrustration) pose = "think";
+    else if (trigger === "no_timetable" || trigger === "deadline_approaching" || trigger === "task_unfinished") pose = "curious";
+    else if (trigger === "user_returned") pose = "wave";
+
     return NextResponse.json({
       data: {
         id: String(nudge._id),
@@ -37,6 +47,7 @@ export async function GET(request: NextRequest) {
         message: nudge.message,
         status: nudge.status,
         strictness: nudge.strictness,
+        pose,
         metadata: nudge.metadata || {},
         createdAt: nudge.createdAt.toISOString(),
       },

@@ -116,6 +116,7 @@ export async function POST(request: NextRequest) {
           reply: backOffReply,
           conversationId,
           intent: "conversation",
+          pose: "concerned",
         },
       });
     }
@@ -140,6 +141,8 @@ export async function POST(request: NextRequest) {
         }
 
         const reaction = getOverdueTaskReaction(answerType, targetTitle, userName, strictness);
+        const taskPose = answerType === "now" ? "celebrate" : answerType === "later" ? "think" : "concerned";
+
         await saveMessage({
           conversationId,
           firebaseUid: user.uid,
@@ -158,6 +161,7 @@ export async function POST(request: NextRequest) {
             reply: reaction,
             conversationId,
             intent: "task_reaction",
+            pose: taskPose,
           },
         });
       }
@@ -253,12 +257,28 @@ export async function POST(request: NextRequest) {
       await nudgeDoc.save();
     }
 
+    // Determine expressive pose
+    const derivedPose = (() => {
+      const lower = message.toLowerCase();
+      if (agentResponse.intent === "farewell") return "wave";
+      if (agentResponse.intent === "welcome_back") return "happy";
+      if (schedule || agentResponse.intent === "timetable_save") return "celebrate";
+      const em = agentResponse.emotion?.emotion;
+      if (em === "happy" || em === "excited") return "celebrate";
+      if (em === "sad" || em === "anxious" || em === "overwhelmed") return "concerned";
+      if (em === "frustrated" || em === "stressed") return "think";
+      if (em === "calm" || em === "neutral") return "curious";
+      if (/sleep|bed\b|rest\b|tired/i.test(lower)) return "sleepy";
+      return "happy";
+    })();
+
     return NextResponse.json({
       data: {
         reply: agentResponse.message,
         conversationId,
         intent: agentResponse.intent,
         schedule,
+        pose: derivedPose,
       },
     });
   } catch (error) {
