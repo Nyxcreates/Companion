@@ -29,7 +29,9 @@ export type NikkiScenario =
   | "app_opened"
   | "timetable_unstarted"
   | "mood_followup"
-  | "caring_frustration";
+  | "caring_frustration"
+  | "task_celebration"
+  | "overload_warning";
 
 // ── Strictness Guidelines & Voice Definitions ─────────────────────────────────
 
@@ -661,6 +663,44 @@ export const SCENARIO_TEMPLATES: Record<
       `Checking in, {name}. Hope things have settled a bit since earlier. How is your focus right now?`,
     ],
   },
+
+  // Scenario: Task celebration — user crushed 3+ tasks today
+  task_celebration: {
+    gentle: [
+      `Hey {name}! You completed {completedCount} tasks today — that's genuinely lovely progress. I hope you're proud of yourself! 🌸`,
+      `{name}, you've checked off {completedCount} things today! That's real, meaningful effort. How are you feeling about the rest of the day?`,
+      `You did it, {name}! {completedCount} tasks crossed off today. I see all the work you put in — it matters! What would feel nice to do next?`,
+    ],
+    playful: [
+      `{name}! {completedCount} tasks DONE today?! You absolute legend! 🎉 That's genuinely good progress — how does it feel?`,
+      `Okay wait, hold on — {name} completed {completedCount} tasks today?! That's amazing momentum! What's powering you today? ⚡`,
+      `You completed {completedCount} tasks today, {name}! That's not nothing — that's actually really good. High five! 🙌 What's next?`,
+    ],
+    firm: [
+      `Solid execution today, {name}: {completedCount} tasks completed. That's real momentum. How are you feeling about what's left?`,
+      `{completedCount} tasks done, {name}. Good work. What's the remaining priority you want to close out before end of day?`,
+      `You cleared {completedCount} tasks today, {name}. Keep that energy — what's the one thing you want to finish next?`,
+    ],
+  },
+
+  // Scenario: Overload warning — too many tasks planned
+  overload_warning: {
+    gentle: [
+      `Hey {name}, I see {totalPendingCount} tasks on your list today. That's a lot to hold at once — want to gently pick just 2 or 3 that matter most and let the rest breathe?`,
+      `{name}, you've got {totalPendingCount} tasks sitting there. No pressure, but would it feel lighter to pick your top 3 for today and let the rest wait?`,
+      `Hi {name}! {totalPendingCount} tasks can feel heavy. Want to choose what actually matters most today and not feel crushed by the rest?`,
+    ],
+    playful: [
+      `Whoa {name}! {totalPendingCount} tasks?? Even I'm overwhelmed just reading the list! 😂 Want to pick the 3 that actually matter today and park the rest?`,
+      `{name}, I love the ambition, but {totalPendingCount} tasks in one day? Let's be realistic besties — which 3 would make today a win?`,
+      `Okay {name}, real talk: {totalPendingCount} tasks is a lot. Want to pick today's actual top 3 and not torture yourself with the rest?`,
+    ],
+    firm: [
+      `{name}, {totalPendingCount} pending tasks is an unrealistic daily load. Let's identify the 3 must-dos for today and move the rest to tomorrow. What are they?`,
+      `Priority check, {name}: {totalPendingCount} tasks can't all happen today. Choose your top 3 — what are the non-negotiables?`,
+      `{name}, having {totalPendingCount} tasks is a recipe for overwhelm, not productivity. Let's pick today's top 3 right now. What moves the needle most?`,
+    ],
+  },
 };
 
 // ── Persona System & Scenario Prompt Builders for Gemini ──────────────────────
@@ -861,6 +901,18 @@ Strictness: ${context.strictness}.`;
       return `Scenario: Mood follow-up.
 Context: ${userName} felt '${ctx.emotion}' earlier today.
 Task: Check in with genuine warmth on how they are feeling right now. Do not diagnose.
+Strictness: ${context.strictness}.`;
+
+    case "task_celebration":
+      return `Scenario: Task celebration.
+Context: ${userName} completed ${ctx.completedCount || 3} tasks today — that's genuine momentum worth celebrating.
+Task: Celebrate their progress with genuine warmth and pride (not over-the-top). Keep it real and ask what they want to tackle next.
+Strictness: ${context.strictness}.`;
+
+    case "overload_warning":
+      return `Scenario: Overload warning.
+Context: ${userName} has ${ctx.totalPendingCount || 7}+ pending tasks today — an unrealistic workload.
+Task: Gently point out the overload with caring honesty. Invite them to pick just 2–3 real priorities for today and let the rest breathe. Never shame them for having too much.
 Strictness: ${context.strictness}.`;
 
     default:

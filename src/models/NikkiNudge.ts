@@ -22,7 +22,9 @@ export type NikkiTrigger =
   | "user_inactive"
   | "user_returned"
   | "app_opened"
-  | "mood_followup";
+  | "mood_followup"
+  | "task_celebration"
+  | "overload_warning";
 
 export interface NikkiNudgeDocument extends Document {
   firebaseUid: string;
@@ -61,6 +63,8 @@ const NikkiNudgeSchema = new Schema<NikkiNudgeDocument>(
         "user_returned",
         "app_opened",
         "mood_followup",
+        "task_celebration",
+        "overload_warning",
       ],
       required: true,
       index: true,

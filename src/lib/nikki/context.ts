@@ -16,6 +16,8 @@ import { JournalEntryModel } from "@/models/JournalEntry";
 import { MemoryModel } from "@/models/Memory";
 import { resolveUserTimezone, parseDateTimeInTimezone } from "@/lib/time/currentTime";
 import type { NikkiStrictness } from "@/types/notification";
+import { computeProgressPercent } from "@/lib/goals/progress";
+import { detectAllGoalTaskInsights, type GoalTaskDetectionResult } from "./goalTaskDetection";
 
 export interface ScheduleItemContext {
   title: string;
@@ -42,24 +44,41 @@ export interface MissedActivityContext {
 export interface GoalContext {
   id: string;
   title: string;
+  description: string | null;
   category: string | null;
+  priority: string;
+  status: string;
   deadline: Date | null;
   isOverdue: boolean;
+  daysUntilDeadline: number | null;
   daysSinceUpdated: number;
   isStale: boolean;
   avoidCount: number;
+  targetLabel: string | null;
+  targetValue: number | null;
+  progressValue: number | null;
+  progressPercent: number | null;
+  completedAt: Date | null;
+  hasGoodProgress: boolean;
 }
 
 export interface TaskContext {
   id: string;
   title: string;
+  description?: string | null;
+  status?: string;
   dueDate: Date | null;
+  goalId?: string | null;
+  goalTitle?: string | null;
   isOverdue: boolean;
   daysOverdue: number;
   daysSinceUpdated: number;
   isStale: boolean;
   priority?: string;
   avoidCount: number;
+  postponeCount?: number;
+  isPostponed?: boolean;
+  completedAt?: Date | null;
 }
 
 export interface NudgeContext {
@@ -126,17 +145,31 @@ export interface NikkiContextSnapshot {
   completedActivitiesCountToday: number;
   completedTasksCountToday: number;
 
-  // Goals & Tasks
+  // Goals & Tasks Awareness (Part 4A)
   activeGoals: GoalContext[];
+  completedGoals: GoalContext[];
+  allGoals: GoalContext[];
   overdueGoals: GoalContext[];
   staleGoals: GoalContext[];
   neglectedGoals: GoalContext[];
+  highPriorityNeglectedGoals: GoalContext[];
+  goalsMakingGoodProgress: GoalContext[];
+
+  pendingTasks: TaskContext[];
+  completedTasks: TaskContext[];
   incompleteTasks: TaskContext[];
   overdueTasks: TaskContext[];
   staleTasks: TaskContext[];
+  postponedTasks: TaskContext[];
+  repeatedlyPostponedTasks: TaskContext[];
   importantUnfinishedTasks: TaskContext[];
   approachingDeadlineTasks: Array<TaskContext & { hoursUntilDue: number }>;
   avoidanceHistory: Record<string, number>;
+  /** Total pending+in_progress tasks today (for overload detection) */
+  totalPendingTasksCount: number;
+
+  // Lightweight detection insights (Part 4B)
+  goalTaskDetections?: GoalTaskDetectionResult;
 
   // Conversation & Long-Term Memory
   lastUserMessageAt: Date | null;
@@ -247,8 +280,9 @@ export async function buildNikkiContext(
   const [
     scheduleDoc,
     reminders,
-    goals,
-    tasks,
+    allGoalDocs,
+    pendingTaskDocs,
+    recentCompletedTaskDocs,
     completedTasksTodayCount,
     lastUserMsg,
     recentNudges,
@@ -263,8 +297,9 @@ export async function buildNikkiContext(
   ] = await Promise.all([
     ScheduleModel.findOne({ firebaseUid, date: localDate }),
     TimetableReminderModel.find({ firebaseUid, scheduleDate: localDate }),
-    GoalModel.find({ firebaseUid, status: "IN_PROGRESS" }),
-    TaskModel.find({ firebaseUid, status: { $in: ["PENDING", "IN_PROGRESS"] } }),
+    GoalModel.find({ firebaseUid }),
+    TaskModel.find({ firebaseUid, status: { $in: ["PENDING", "IN_PROGRESS"] } }).sort({ dueDate: 1, createdAt: -1 }),
+    TaskModel.find({ firebaseUid, status: "COMPLETED" }).sort({ completedAt: -1, updatedAt: -1 }).limit(20),
     TaskModel.countDocuments({ firebaseUid, status: "COMPLETED", updatedAt: { $gte: startOfDayUtc } }),
     MessageModel.findOne({ firebaseUid, role: "user" }).sort({ createdAt: -1 }),
     NikkiNudgeModel.find({ firebaseUid }).sort({ createdAt: -1 }).limit(25),
@@ -291,6 +326,19 @@ export async function buildNikkiContext(
       avoidanceHistory[targetId] = (avoidanceHistory[targetId] || 0) + 1;
     }
   }
+
+  // Build goal title lookup map (0 extra database queries)
+  const goalTitleMap = new Map<string, string>();
+  for (const g of allGoalDocs) {
+    goalTitleMap.set(String(g._id), g.title);
+  }
+
+  // Detect timetable reminders marked "later" or dismissed today
+  const postponedReminderTitles = new Set(
+    reminders
+      .filter((r) => r.status === "later" || r.userDismissedCount > 0)
+      .map((r) => (r.itemTitle || "").trim().toLowerCase())
+  );
 
   // Process schedule, unstarted items & missed activities
   const reminderMap = new Map<string, string>();
@@ -356,88 +404,201 @@ export async function buildNikkiContext(
     }
   }
 
-  // Process goals
+  // Process goals (Part 4A: all statuses, progress, deadlines)
+  const allGoals: GoalContext[] = [];
   const activeGoals: GoalContext[] = [];
+  const completedGoals: GoalContext[] = [];
   const overdueGoals: GoalContext[] = [];
   const staleGoals: GoalContext[] = [];
   const neglectedGoals: GoalContext[] = [];
+  const highPriorityNeglectedGoals: GoalContext[] = [];
+  const goalsMakingGoodProgress: GoalContext[] = [];
 
-  for (const g of goals) {
+  for (const g of allGoalDocs) {
     const updatedMs = new Date(g.updatedAt || g.createdAt).getTime();
-    const daysSinceUpdated = Math.floor((now.getTime() - updatedMs) / (1000 * 60 * 60 * 24));
-    const isStale = daysSinceUpdated >= 3;
-    const isOverdue = Boolean(g.deadline && new Date(g.deadline) < now);
+    const daysSinceUpdated = !isNaN(updatedMs)
+      ? Math.max(0, Math.floor((now.getTime() - updatedMs) / (1000 * 60 * 60 * 24)))
+      : 0;
+
+    const deadlineDate = g.deadline && !isNaN(new Date(g.deadline).getTime()) ? new Date(g.deadline) : null;
+    const isOverdue = Boolean(deadlineDate && deadlineDate.getTime() < now.getTime() && g.status !== "COMPLETED");
+    const daysUntilDeadline = deadlineDate
+      ? Math.round((deadlineDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+      : null;
+
     const goalId = String(g._id);
     const avoidCount = avoidanceHistory[goalId] || 0;
 
+    const targetVal = typeof g.targetValue === "number" && g.targetValue > 0 ? g.targetValue : null;
+    const progressVal = typeof g.progressValue === "number" ? g.progressValue : null;
+    const progressPercent = computeProgressPercent(targetVal, progressVal);
+
+    // Stale check: HIGH priority stale after 2 days; others after 3 days
+    const staleThreshold = g.priority === "HIGH" ? 2 : 3;
+    const isStale = daysSinceUpdated >= staleThreshold && g.status === "ACTIVE";
+
+    const completedAtDate = g.completedAt && !isNaN(new Date(g.completedAt).getTime())
+      ? new Date(g.completedAt)
+      : null;
+
+    const hasGoodProgress = Boolean(
+      g.status === "COMPLETED" ||
+      (progressPercent !== null && progressPercent >= 50) ||
+      (progressPercent !== null && progressPercent > 0 && daysSinceUpdated <= 1)
+    );
+
     const goalCtx: GoalContext = {
       id: goalId,
-      title: g.title,
+      title: g.title || "Untitled Goal",
+      description: g.description ?? null,
       category: g.category ?? null,
-      deadline: g.deadline ? new Date(g.deadline) : null,
+      priority: g.priority ?? "MEDIUM",
+      status: g.status ?? "ACTIVE",
+      deadline: deadlineDate,
       isOverdue,
+      daysUntilDeadline,
       daysSinceUpdated,
       isStale,
       avoidCount,
+      targetLabel: g.targetLabel ?? null,
+      targetValue: targetVal,
+      progressValue: progressVal,
+      progressPercent,
+      completedAt: completedAtDate,
+      hasGoodProgress,
     };
-    activeGoals.push(goalCtx);
-    if (isOverdue) overdueGoals.push(goalCtx);
-    if (isStale) {
-      staleGoals.push(goalCtx);
-      neglectedGoals.push(goalCtx);
+
+    allGoals.push(goalCtx);
+
+    if (g.status === "COMPLETED") {
+      completedGoals.push(goalCtx);
+      if (hasGoodProgress) goalsMakingGoodProgress.push(goalCtx);
+    } else if (g.status === "ACTIVE") {
+      activeGoals.push(goalCtx);
+      if (isOverdue) overdueGoals.push(goalCtx);
+      if (isStale) {
+        staleGoals.push(goalCtx);
+        neglectedGoals.push(goalCtx);
+        if (g.priority === "HIGH") {
+          highPriorityNeglectedGoals.push(goalCtx);
+        }
+      }
+      if (hasGoodProgress) {
+        goalsMakingGoodProgress.push(goalCtx);
+      }
     }
   }
 
-  // Process tasks
+  // Process tasks (Part 4A: pending, completed, overdue, deadlines, postponed)
+  const pendingTasks: TaskContext[] = [];
   const incompleteTasks: TaskContext[] = [];
+  const completedTasks: TaskContext[] = [];
   const overdueTasks: TaskContext[] = [];
   const staleTasks: TaskContext[] = [];
+  const postponedTasks: TaskContext[] = [];
+  const repeatedlyPostponedTasks: TaskContext[] = [];
   const importantUnfinishedTasks: TaskContext[] = [];
   const approachingDeadlineTasks: Array<TaskContext & { hoursUntilDue: number }> = [];
 
-  for (const t of tasks) {
+  for (const t of pendingTaskDocs) {
     const updatedMs = new Date(t.updatedAt || t.createdAt).getTime();
-    const daysSinceUpdated = Math.floor((now.getTime() - updatedMs) / (1000 * 60 * 60 * 24));
+    const daysSinceUpdated = !isNaN(updatedMs)
+      ? Math.max(0, Math.floor((now.getTime() - updatedMs) / (1000 * 60 * 60 * 24)))
+      : 0;
     const isStale = daysSinceUpdated >= 3;
-    const isOverdue = Boolean(t.dueDate && new Date(t.dueDate) < now);
-    const daysOverdue = isOverdue && t.dueDate
-      ? Math.max(1, Math.floor((now.getTime() - new Date(t.dueDate).getTime()) / (1000 * 60 * 60 * 24)))
+
+    const dueDate = t.dueDate && !isNaN(new Date(t.dueDate).getTime()) ? new Date(t.dueDate) : null;
+    const isOverdue = Boolean(dueDate && dueDate.getTime() < now.getTime());
+    const daysOverdue = isOverdue && dueDate
+      ? Math.max(1, Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)))
       : 0;
 
     const taskId = String(t._id);
     const avoidCount = avoidanceHistory[taskId] || 0;
+    const titleLower = (t.title || "").trim().toLowerCase();
+    const reminderPostponedCount = postponedReminderTitles.has(titleLower) ? 1 : 0;
+    const postponeCount = avoidCount + reminderPostponedCount;
+    const isPostponed = postponeCount > 0;
+
     const priority = (t as unknown as { priority?: string })?.priority || "medium";
+    const goalId = t.goalId ? String(t.goalId) : null;
+    const goalTitle = goalId ? (goalTitleMap.get(goalId) ?? null) : null;
 
     const taskCtx: TaskContext = {
       id: taskId,
-      title: t.title,
-      dueDate: t.dueDate ? new Date(t.dueDate) : null,
+      title: t.title || "Untitled Task",
+      description: t.description ?? null,
+      status: t.status ?? "PENDING",
+      dueDate,
+      goalId,
+      goalTitle,
       isOverdue,
       daysOverdue,
       daysSinceUpdated,
       isStale,
       priority,
       avoidCount,
+      postponeCount,
+      isPostponed,
+      completedAt: null,
     };
+
+    pendingTasks.push(taskCtx);
     incompleteTasks.push(taskCtx);
+
     if (isOverdue) overdueTasks.push(taskCtx);
     if (isStale) staleTasks.push(taskCtx);
+    if (isPostponed) postponedTasks.push(taskCtx);
+    if (postponeCount >= 2 || avoidCount >= 2) repeatedlyPostponedTasks.push(taskCtx);
 
-    // Important unfinished tasks (high priority or due today)
+    // Important unfinished tasks (high priority or urgent)
     if (priority === "high" || priority === "urgent") {
       importantUnfinishedTasks.push(taskCtx);
     }
 
-    // Approaching deadline tasks (due within next 6 hours or today)
-    if (t.dueDate && !isOverdue) {
-      const hoursUntilDue = (new Date(t.dueDate).getTime() - now.getTime()) / (1000 * 60 * 60);
-      if (hoursUntilDue >= 0 && hoursUntilDue <= 6) {
+    // Approaching deadline tasks (due in future within next 24 hours)
+    if (dueDate && !isOverdue) {
+      const hoursUntilDue = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+      if (hoursUntilDue >= 0 && hoursUntilDue <= 24) {
         approachingDeadlineTasks.push({
           ...taskCtx,
           hoursUntilDue: Math.round(hoursUntilDue * 10) / 10,
         });
       }
     }
+  }
+
+  // Process completed tasks
+  for (const t of recentCompletedTaskDocs) {
+    const updatedMs = new Date(t.updatedAt || t.createdAt).getTime();
+    const daysSinceUpdated = !isNaN(updatedMs)
+      ? Math.max(0, Math.floor((now.getTime() - updatedMs) / (1000 * 60 * 60 * 24)))
+      : 0;
+    const dueDate = t.dueDate && !isNaN(new Date(t.dueDate).getTime()) ? new Date(t.dueDate) : null;
+    const goalId = t.goalId ? String(t.goalId) : null;
+    const goalTitle = goalId ? (goalTitleMap.get(goalId) ?? null) : null;
+    const completedAt = t.completedAt && !isNaN(new Date(t.completedAt).getTime())
+      ? new Date(t.completedAt)
+      : null;
+
+    completedTasks.push({
+      id: String(t._id),
+      title: t.title || "Untitled Task",
+      description: t.description ?? null,
+      status: "COMPLETED",
+      dueDate,
+      goalId,
+      goalTitle,
+      isOverdue: false, // completed tasks are NEVER overdue
+      daysOverdue: 0,
+      daysSinceUpdated,
+      isStale: false,
+      priority: (t as unknown as { priority?: string })?.priority || "medium",
+      avoidCount: 0,
+      postponeCount: 0,
+      isPostponed: false,
+      completedAt,
+    });
   }
 
   // Focus sessions
@@ -602,7 +763,7 @@ export async function buildNikkiContext(
   );
   const isLongContinuousSession = isRecentSession;
 
-  return {
+  const snapshot: NikkiContextSnapshot = {
     firebaseUid,
     userName,
     companionName,
@@ -629,16 +790,27 @@ export async function buildNikkiContext(
     completedActivitiesCountToday,
     completedTasksCountToday: completedTasksTodayCount,
 
+    // Goals & Tasks Awareness (Part 4A)
     activeGoals,
+    completedGoals,
+    allGoals,
     overdueGoals,
     staleGoals,
     neglectedGoals,
+    highPriorityNeglectedGoals,
+    goalsMakingGoodProgress,
+
+    pendingTasks,
+    completedTasks,
     incompleteTasks,
     overdueTasks,
     staleTasks,
+    postponedTasks,
+    repeatedlyPostponedTasks,
     importantUnfinishedTasks,
     approachingDeadlineTasks,
     avoidanceHistory,
+    totalPendingTasksCount: pendingTasks.length,
 
     lastUserMessageAt,
     minutesSinceLastUserMessage,
@@ -668,4 +840,7 @@ export async function buildNikkiContext(
     usualBedtime,
     usualWakeTime,
   };
+
+  snapshot.goalTaskDetections = detectAllGoalTaskInsights(snapshot, { now });
+  return snapshot;
 }

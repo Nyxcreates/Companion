@@ -235,6 +235,30 @@ export function decideNikkiNudge(
     }
   }
 
+  // 5b. TRIGGER: overload_warning — 7+ pending tasks in morning window
+  if (
+    context.totalPendingTasksCount >= 7 &&
+    context.currentHour >= 8 &&
+    context.currentHour <= 11
+  ) {
+    const idempotencyKey = `${context.firebaseUid}:overload_warning:${context.localDate}`;
+    const alreadySentToday = context.lastNudge?.trigger === "overload_warning" &&
+      isSameDay(context.lastNudge.createdAt, context.localDate);
+
+    if (!alreadySentToday) {
+      return {
+        shouldSpeak: true,
+        trigger: "overload_warning",
+        priorityScore: 76,
+        idempotencyKey,
+        reason: `User has ${context.totalPendingTasksCount} pending tasks — potential overload; offer to prioritise.`,
+        triggerContext: {
+          totalPendingCount: context.totalPendingTasksCount,
+        },
+      };
+    }
+  }
+
   // 6. TRIGGER: morning_checkin / morning_plan
   // Fires in the morning between wake time and 10:30
   if (context.totalMinutes >= wakeTotalMins && context.totalMinutes <= 10 * 60 + 30) {
@@ -382,18 +406,53 @@ export function decideNikkiNudge(
     }
   }
 
-  // 12. TRIGGER: goal_neglected / stale goal
+  // 11b. TRIGGER: task_celebration
+  // User completed 3+ tasks today — celebrate their momentum (afternoon window)
+  if (
+    context.completedTasksCountToday >= 3 &&
+    context.currentHour >= 13 &&
+    context.currentHour <= 19
+  ) {
+    const idempotencyKey = `${context.firebaseUid}:task_celebration:${context.localDate}`;
+    const alreadySentToday = context.lastNudge?.trigger === "task_celebration" &&
+      isSameDay(context.lastNudge.createdAt, context.localDate);
+
+    if (!alreadySentToday) {
+      return {
+        shouldSpeak: true,
+        trigger: "task_celebration",
+        priorityScore: 58,
+        idempotencyKey,
+        reason: `User completed ${context.completedTasksCountToday} tasks today — genuine momentum worth celebrating.`,
+        triggerContext: {
+          completedCount: context.completedTasksCountToday,
+        },
+      };
+    }
+  }
+
+  // 12. TRIGGER: goal_neglected / stale goal — high-priority first
+  // High-priority neglected goals fire before medium/low-priority ones
   if (context.neglectedGoals.length > 0) {
-    const goal = context.neglectedGoals[0];
+    // Sort: HIGH priority first, then by days since updated (most neglected first)
+    const sortedNeglected = [...context.neglectedGoals].sort((a, b) => {
+      const priorityOrder: Record<string, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+      const pa = priorityOrder[(a as { priority?: string }).priority ?? "MEDIUM"] ?? 1;
+      const pb = priorityOrder[(b as { priority?: string }).priority ?? "MEDIUM"] ?? 1;
+      if (pa !== pb) return pa - pb;
+      return b.daysSinceUpdated - a.daysSinceUpdated;
+    });
+    const goal = sortedNeglected[0];
     const idempotencyKey = `${context.firebaseUid}:goal_neglected:${goal.id}:${context.localDate}`;
     const alreadySentToday = context.lastNudge?.idempotencyKey === idempotencyKey;
 
     if (!alreadySentToday) {
       const isCaringFrustration = goal.avoidCount >= 2;
+      const goalPriority = (goal as { priority?: string }).priority ?? "MEDIUM";
       return {
         shouldSpeak: true,
         trigger: "goal_neglected",
-        priorityScore: 55,
+        priorityScore: goalPriority === "HIGH" ? 57 : 55,
         idempotencyKey,
         reason: isCaringFrustration
           ? `Goal '${goal.title}' avoided ${goal.avoidCount} times; caring frustration check-in.`
@@ -401,9 +460,11 @@ export function decideNikkiNudge(
         triggerContext: {
           goalId: goal.id,
           goalTitle: goal.title,
+          goalPriority,
           daysSinceUpdated: goal.daysSinceUpdated,
           avoidCount: goal.avoidCount,
           isCaringFrustration,
+          progressPercent: (goal as { progressPercent?: number | null }).progressPercent ?? null,
         },
       };
     }
@@ -439,7 +500,32 @@ export function decideNikkiNudge(
     }
   }
 
-  // 14. TRIGGER: long_session
+  // 14. TRIGGER: task_celebration — user completed 3+ tasks today (afternoon window)
+  if (
+    context.completedTasksCountToday >= 3 &&
+    context.currentHour >= 13 &&
+    context.currentHour <= 19
+  ) {
+    const idempotencyKey = `${context.firebaseUid}:task_celebration:${context.localDate}`;
+    const alreadySentToday = context.lastNudge?.trigger === "task_celebration" &&
+      isSameDay(context.lastNudge.createdAt, context.localDate);
+
+    if (!alreadySentToday) {
+      return {
+        shouldSpeak: true,
+        trigger: "task_celebration",
+        priorityScore: 48,
+        idempotencyKey,
+        reason: `User completed ${context.completedTasksCountToday} tasks today — genuine momentum worth celebrating.`,
+        triggerContext: {
+          completedCount: context.completedTasksCountToday,
+        },
+      };
+    }
+  }
+
+
+  // 15. TRIGGER: long_session
   if (context.isLongContinuousSession && context.breakCountToday === 0) {
     const windowBucket = Math.floor(context.currentHour / 3);
     const idempotencyKey = `${context.firebaseUid}:long_session:${context.localDate}:${windowBucket}`;

@@ -789,6 +789,21 @@ export function NikkiProactivePresence() {
     if (trigger === "long_silence") {
       return ["Doing well!", "Missed you!"];
     }
+    if (trigger === "goal_neglected") {
+      return ["Let's work on it now", "Break it into steps", "What's blocking me?"];
+    }
+    if (trigger === "task_celebration") {
+      return ["That felt great! 🎉", "What's next?", "Need a short break first"];
+    }
+    if (trigger === "task_unfinished") {
+      return ["Starting right now 💪", "Break it into smaller steps", "I'm blocked on this"];
+    }
+    if (trigger === "overload_warning") {
+      return ["Help me prioritize", "Pick top 3 for me", "I'll figure it out"];
+    }
+    if (trigger === "deadline_approaching") {
+      return ["Starting now!", "Need to reschedule", "Break it down for me"];
+    }
     return ["I'm doing good", "Help me plan", `Bye ${companionName}`];
   }, [activeNudge?.trigger, companionName]);
 
@@ -893,6 +908,10 @@ export function NikkiProactivePresence() {
           // If timetable was modified, emit event so timetable UI syncs
           if (env.data.schedule || env.data.intent === "timetable_delete") {
             window.dispatchEvent(new CustomEvent("companion:schedule-change"));
+          }
+          // If goals or tasks were modified, emit event so goals/tasks UI syncs
+          if (env.data.goalTaskChanged) {
+            window.dispatchEvent(new CustomEvent("companion:goal-task-change"));
           }
         }
       } catch {

@@ -272,6 +272,12 @@ export async function POST(request: NextRequest) {
       return "happy";
     })();
 
+    const goalTaskChanged =
+      (agentResponse.intent as string) === "task_complete" ||
+      (agentResponse.intent as string) === "goal_update" ||
+      (agentResponse.intent as string) === "task_reschedule" ||
+      (agentResponse.intent as string) === "task_break";
+
     return NextResponse.json({
       data: {
         reply: agentResponse.message,
@@ -279,6 +285,7 @@ export async function POST(request: NextRequest) {
         intent: agentResponse.intent,
         schedule,
         pose: derivedPose,
+        goalTaskChanged: goalTaskChanged || false,
       },
     });
   } catch (error) {
