@@ -11,6 +11,9 @@ import { EmotionModel } from "@/models/Emotion";
 import { CheckInHistoryModel } from "@/models/CheckInHistory";
 import { BreakSessionModel } from "@/models/BreakSession";
 import { UsageSessionModel } from "@/models/UsageSession";
+import { FocusSessionModel } from "@/models/FocusSession";
+import { JournalEntryModel } from "@/models/JournalEntry";
+import { MemoryModel } from "@/models/Memory";
 import { resolveUserTimezone, parseDateTimeInTimezone } from "@/lib/time/currentTime";
 import type { NikkiStrictness } from "@/types/notification";
 
@@ -29,6 +32,13 @@ export interface UnstartedStartedItemContext {
   minutesSinceStart: number;
 }
 
+export interface MissedActivityContext {
+  title: string;
+  start: string;
+  end: string;
+  minutesLate: number;
+}
+
 export interface GoalContext {
   id: string;
   title: string;
@@ -37,6 +47,7 @@ export interface GoalContext {
   isOverdue: boolean;
   daysSinceUpdated: number;
   isStale: boolean;
+  avoidCount: number;
 }
 
 export interface TaskContext {
@@ -47,6 +58,8 @@ export interface TaskContext {
   daysOverdue: number;
   daysSinceUpdated: number;
   isStale: boolean;
+  priority?: string;
+  avoidCount: number;
 }
 
 export interface NudgeContext {
@@ -54,6 +67,7 @@ export interface NudgeContext {
   trigger: NikkiTrigger;
   message: string;
   status: NikkiNudgeStatus;
+  idempotencyKey?: string;
   createdAt: Date;
 }
 
@@ -61,6 +75,26 @@ export interface MoodContext {
   emotion: string;
   intensity: number;
   createdAt: Date;
+}
+
+export interface FocusSessionContext {
+  status: string;
+  durationMinutes: number;
+  completedAt: Date | null;
+  taskTitle?: string;
+}
+
+export interface JournalContext {
+  title: string | null;
+  mood: string | null;
+  createdAt: Date;
+  hoursSinceEntry: number;
+}
+
+export interface MemoryContext {
+  type: string;
+  content: string;
+  confidence: number;
 }
 
 export interface NikkiContextSnapshot {
@@ -82,23 +116,43 @@ export interface NikkiContextSnapshot {
   pausedUntil: Date | null;
   proactiveEnabled: boolean;
   strictness: NikkiStrictness;
+  checkInFrequency: "gentle" | "balanced" | "frequent";
 
   // Schedule & Timetable
   hasScheduleToday: boolean;
   scheduleItems: ScheduleItemContext[];
   unstartedStartedItems: UnstartedStartedItemContext[];
+  missedActivities: MissedActivityContext[];
+  completedActivitiesCountToday: number;
+  completedTasksCountToday: number;
 
   // Goals & Tasks
   activeGoals: GoalContext[];
   overdueGoals: GoalContext[];
   staleGoals: GoalContext[];
+  neglectedGoals: GoalContext[];
   incompleteTasks: TaskContext[];
   overdueTasks: TaskContext[];
   staleTasks: TaskContext[];
+  importantUnfinishedTasks: TaskContext[];
+  approachingDeadlineTasks: Array<TaskContext & { hoursUntilDue: number }>;
+  avoidanceHistory: Record<string, number>;
 
-  // Conversation & Nudges
+  // Conversation & Long-Term Memory
   lastUserMessageAt: Date | null;
   minutesSinceLastUserMessage: number | null;
+  lastConversationTopic: string | null;
+  memories: MemoryContext[];
+
+  // Focus Sessions
+  lastFocusSession: FocusSessionContext | null;
+  isFocusSessionJustFinished: boolean;
+  activeFocusSession: { id: string; startedAt: Date; elapsedMinutes: number; taskTitle?: string } | null;
+
+  // Journal Reflection
+  recentJournalEntry: JournalContext | null;
+
+  // Nudges & Interaction History
   lastNudge: NudgeContext | null;
   recentNudgeOutcomes: NikkiNudgeStatus[];
   consecutiveIgnoredOrDismissedNudges: number;
@@ -109,9 +163,11 @@ export interface NikkiContextSnapshot {
   hydrationCountToday: number;
   breakCountToday: number;
 
-  // App presence
+  // App Presence & Absence
   lastSeenAt: Date | null;
   minutesSinceLastSeen: number | null;
+  isFirstOpenOfDay: boolean;
+  isReturningAfterAbsence: boolean;
   isLongContinuousSession: boolean;
   usualBedtime: string; // "HH:MM"
   usualWakeTime: string; // "HH:MM"
@@ -181,30 +237,37 @@ export async function buildNikkiContext(
   const isPaused = Boolean(prefs?.pausedUntil && new Date(prefs.pausedUntil) > now);
   const proactiveEnabled = prefs?.proactiveEnabled !== false;
   const strictness: NikkiStrictness = prefs?.strictness ?? "playful";
+  const checkInFrequency = prefs?.checkInFrequency ?? "balanced";
 
   // Usual sleep & wake time
   const usualBedtime = user?.dailyRhythm?.sleepTime || quietHoursStart || "23:00";
   const usualWakeTime = user?.dailyRhythm?.wakeTime || quietHoursEnd || "07:30";
 
-  // Parallel fetch of rest of data
+  // Parallel fetch of all connected user context
   const [
     scheduleDoc,
     reminders,
     goals,
     tasks,
+    completedTasksTodayCount,
     lastUserMsg,
     recentNudges,
     recentEmotions,
     todayCheckIns,
     todayBreakSessionsCount,
     recentUsageSession,
+    completedFocusSessions,
+    activeFocusSessionDoc,
+    recentJournalDoc,
+    activeMemories,
   ] = await Promise.all([
     ScheduleModel.findOne({ firebaseUid, date: localDate }),
     TimetableReminderModel.find({ firebaseUid, scheduleDate: localDate }),
     GoalModel.find({ firebaseUid, status: "IN_PROGRESS" }),
     TaskModel.find({ firebaseUid, status: { $in: ["PENDING", "IN_PROGRESS"] } }),
+    TaskModel.countDocuments({ firebaseUid, status: "COMPLETED", updatedAt: { $gte: startOfDayUtc } }),
     MessageModel.findOne({ firebaseUid, role: "user" }).sort({ createdAt: -1 }),
-    NikkiNudgeModel.find({ firebaseUid }).sort({ createdAt: -1 }).limit(10),
+    NikkiNudgeModel.find({ firebaseUid }).sort({ createdAt: -1 }).limit(25),
     EmotionModel.find({ firebaseUid }).sort({ createdAt: -1 }).limit(5),
     CheckInHistoryModel.find({ firebaseUid, createdAt: { $gte: startOfDayUtc } }),
     BreakSessionModel.countDocuments({
@@ -213,9 +276,23 @@ export async function buildNikkiContext(
       status: { $in: ["active", "extended", "ended"] },
     }),
     UsageSessionModel.findOne({ firebaseUid, type: "app_active" }).sort({ startedAt: -1 }),
+    FocusSessionModel.find({ firebaseUid, status: "COMPLETED" }).sort({ completedAt: -1 }).limit(3),
+    FocusSessionModel.findOne({ firebaseUid, status: { $in: ["ACTIVE", "PAUSED"] } }),
+    JournalEntryModel.findOne({ firebaseUid }).sort({ createdAt: -1 }),
+    MemoryModel.find({ firebaseUid, status: "active" }).sort({ lastUsedAt: -1, createdAt: -1 }).limit(5),
   ]);
 
-  // Process schedule & unstarted items
+  // Compute avoidance history per task / goal from recent nudges
+  const avoidanceHistory: Record<string, number> = {};
+  for (const n of recentNudges) {
+    const meta = n.metadata || {};
+    const targetId = (meta.targetId as string) || (meta.itemId as string);
+    if (targetId) {
+      avoidanceHistory[targetId] = (avoidanceHistory[targetId] || 0) + 1;
+    }
+  }
+
+  // Process schedule, unstarted items & missed activities
   const reminderMap = new Map<string, string>();
   for (const r of reminders) {
     reminderMap.set(`${r.itemStart}_${r.itemTitle}`, r.status);
@@ -223,11 +300,17 @@ export async function buildNikkiContext(
 
   const scheduleItems: ScheduleItemContext[] = [];
   const unstartedStartedItems: UnstartedStartedItemContext[] = [];
+  const missedActivities: MissedActivityContext[] = [];
+  let completedActivitiesCountToday = 0;
   const hasScheduleToday = Boolean(scheduleDoc && scheduleDoc.items && scheduleDoc.items.length > 0);
 
   if (scheduleDoc?.items) {
     for (const item of scheduleDoc.items) {
       const status = reminderMap.get(`${item.start}_${item.title}`) ?? "pending";
+      if (status === "done") {
+        completedActivitiesCountToday++;
+      }
+
       scheduleItems.push({
         title: item.title,
         start: item.start,
@@ -241,7 +324,7 @@ export async function buildNikkiContext(
         const itemStartMins = ih * 60 + (im || 0);
         const minutesSinceStart = totalMinutes - itemStartMins;
 
-        // Item has started >= 10 minutes ago, but is not marked started or done
+        // Item started >= 10 minutes ago, but is not marked started or done
         if (minutesSinceStart >= 10 && minutesSinceStart <= 120) {
           if (status !== "started" && status !== "done" && status !== "skipped") {
             unstartedStartedItems.push({
@@ -252,6 +335,23 @@ export async function buildNikkiContext(
             });
           }
         }
+
+        // Missed activity: end time has passed by >= 15m and status is still pending/unstarted
+        if (item.end) {
+          const [eh, em] = item.end.split(":").map(Number);
+          const itemEndMins = eh * 60 + (em || 0);
+          const minutesLate = totalMinutes - itemEndMins;
+          if (minutesLate >= 15 && minutesLate <= 300) {
+            if (status !== "done" && status !== "skipped") {
+              missedActivities.push({
+                title: item.title,
+                start: item.start,
+                end: item.end,
+                minutesLate,
+              });
+            }
+          }
+        }
       }
     }
   }
@@ -260,31 +360,40 @@ export async function buildNikkiContext(
   const activeGoals: GoalContext[] = [];
   const overdueGoals: GoalContext[] = [];
   const staleGoals: GoalContext[] = [];
+  const neglectedGoals: GoalContext[] = [];
 
   for (const g of goals) {
     const updatedMs = new Date(g.updatedAt || g.createdAt).getTime();
     const daysSinceUpdated = Math.floor((now.getTime() - updatedMs) / (1000 * 60 * 60 * 24));
     const isStale = daysSinceUpdated >= 3;
     const isOverdue = Boolean(g.deadline && new Date(g.deadline) < now);
+    const goalId = String(g._id);
+    const avoidCount = avoidanceHistory[goalId] || 0;
 
     const goalCtx: GoalContext = {
-      id: String(g._id),
+      id: goalId,
       title: g.title,
       category: g.category ?? null,
       deadline: g.deadline ? new Date(g.deadline) : null,
       isOverdue,
       daysSinceUpdated,
       isStale,
+      avoidCount,
     };
     activeGoals.push(goalCtx);
     if (isOverdue) overdueGoals.push(goalCtx);
-    if (isStale) staleGoals.push(goalCtx);
+    if (isStale) {
+      staleGoals.push(goalCtx);
+      neglectedGoals.push(goalCtx);
+    }
   }
 
   // Process tasks
   const incompleteTasks: TaskContext[] = [];
   const overdueTasks: TaskContext[] = [];
   const staleTasks: TaskContext[] = [];
+  const importantUnfinishedTasks: TaskContext[] = [];
+  const approachingDeadlineTasks: Array<TaskContext & { hoursUntilDue: number }> = [];
 
   for (const t of tasks) {
     const updatedMs = new Date(t.updatedAt || t.createdAt).getTime();
@@ -295,25 +404,101 @@ export async function buildNikkiContext(
       ? Math.max(1, Math.floor((now.getTime() - new Date(t.dueDate).getTime()) / (1000 * 60 * 60 * 24)))
       : 0;
 
+    const taskId = String(t._id);
+    const avoidCount = avoidanceHistory[taskId] || 0;
+    const priority = (t as unknown as { priority?: string })?.priority || "medium";
+
     const taskCtx: TaskContext = {
-      id: String(t._id),
+      id: taskId,
       title: t.title,
       dueDate: t.dueDate ? new Date(t.dueDate) : null,
       isOverdue,
       daysOverdue,
       daysSinceUpdated,
       isStale,
+      priority,
+      avoidCount,
     };
     incompleteTasks.push(taskCtx);
     if (isOverdue) overdueTasks.push(taskCtx);
     if (isStale) staleTasks.push(taskCtx);
+
+    // Important unfinished tasks (high priority or due today)
+    if (priority === "high" || priority === "urgent") {
+      importantUnfinishedTasks.push(taskCtx);
+    }
+
+    // Approaching deadline tasks (due within next 6 hours or today)
+    if (t.dueDate && !isOverdue) {
+      const hoursUntilDue = (new Date(t.dueDate).getTime() - now.getTime()) / (1000 * 60 * 60);
+      if (hoursUntilDue >= 0 && hoursUntilDue <= 6) {
+        approachingDeadlineTasks.push({
+          ...taskCtx,
+          hoursUntilDue: Math.round(hoursUntilDue * 10) / 10,
+        });
+      }
+    }
   }
 
-  // Last time user talked to Nikki
+  // Focus sessions
+  const latestCompletedFocus = completedFocusSessions[0] || null;
+  let lastFocusSession: FocusSessionContext | null = null;
+  let isFocusSessionJustFinished = false;
+
+  if (latestCompletedFocus?.completedAt) {
+    const minsSinceFocus = Math.floor(
+      (now.getTime() - new Date(latestCompletedFocus.completedAt).getTime()) / 60000
+    );
+    const durationMinutes = Math.round(
+      (latestCompletedFocus.actualDurationSeconds || latestCompletedFocus.plannedDurationSeconds || 0) / 60
+    );
+
+    lastFocusSession = {
+      status: "COMPLETED",
+      durationMinutes,
+      completedAt: new Date(latestCompletedFocus.completedAt),
+    };
+
+    if (minsSinceFocus >= 0 && minsSinceFocus <= 15 && durationMinutes >= 20) {
+      isFocusSessionJustFinished = true;
+    }
+  }
+
+  let activeFocusSession: { id: string; startedAt: Date; elapsedMinutes: number; taskTitle?: string } | null = null;
+  if (activeFocusSessionDoc) {
+    const elapsedMinutes = Math.floor((now.getTime() - new Date(activeFocusSessionDoc.startedAt).getTime()) / 60000);
+    activeFocusSession = {
+      id: String(activeFocusSessionDoc._id),
+      startedAt: new Date(activeFocusSessionDoc.startedAt),
+      elapsedMinutes,
+    };
+  }
+
+  // Journal entry
+  let recentJournalEntry: JournalContext | null = null;
+  if (recentJournalDoc) {
+    const hoursSinceEntry = Math.floor((now.getTime() - new Date(recentJournalDoc.createdAt).getTime()) / (1000 * 60 * 60));
+    recentJournalEntry = {
+      title: recentJournalDoc.title,
+      mood: recentJournalDoc.mood || null,
+      createdAt: new Date(recentJournalDoc.createdAt),
+      hoursSinceEntry,
+    };
+  }
+
+  // Long-Term Memory
+  const memories: MemoryContext[] = activeMemories.map((m) => ({
+    type: m.type,
+    content: m.content,
+    confidence: m.confidence,
+  }));
+
+  // Conversation history
   const lastUserMessageAt = lastUserMsg?.createdAt ? new Date(lastUserMsg.createdAt) : null;
   const minutesSinceLastUserMessage = lastUserMessageAt
     ? Math.floor((now.getTime() - lastUserMessageAt.getTime()) / 60000)
     : null;
+  const lastConversationTopic = lastUserMsg?.content ? lastUserMsg.content.slice(0, 100) : null;
 
   // Process nudges & outcomes
   const lastNudgeDoc = recentNudges[0] ?? null;
@@ -323,6 +508,7 @@ export async function buildNikkiContext(
         trigger: lastNudgeDoc.trigger,
         message: lastNudgeDoc.message,
         status: lastNudgeDoc.status,
+        idempotencyKey: lastNudgeDoc.idempotencyKey,
         createdAt: new Date(lastNudgeDoc.createdAt),
       }
     : null;
@@ -330,7 +516,6 @@ export async function buildNikkiContext(
   const recentNudgeOutcomes: NikkiNudgeStatus[] = recentNudges.map((n) => n.status);
 
   // Consecutive ignored or dismissed nudges:
-  // If the user interacted (sent a message) after the nudge was sent, that breaks consecutive ignored.
   let consecutiveIgnoredOrDismissedNudges = 0;
   for (const n of recentNudges) {
     const nudgeTime = new Date(n.createdAt).getTime();
@@ -340,7 +525,6 @@ export async function buildNikkiContext(
     if (n.status === "dismissed" || n.status === "expired") {
       consecutiveIgnoredOrDismissedNudges++;
     } else if (n.status === "delivered" || n.status === "created") {
-      // If delivered more than 3 hours ago with no reply, treat as ignored
       const ageHours = (now.getTime() - nudgeTime) / (1000 * 60 * 60);
       if (ageHours >= 3) {
         consecutiveIgnoredOrDismissedNudges++;
@@ -380,7 +564,7 @@ export async function buildNikkiContext(
     }
   }
 
-  // App presence
+  // App presence & absence
   const lastSeenAt = prefs?.lastSeenAt
     ? new Date(prefs.lastSeenAt)
     : recentUsageSession?.endedAt
@@ -390,6 +574,25 @@ export async function buildNikkiContext(
   const minutesSinceLastSeen = lastSeenAt
     ? Math.max(0, Math.floor((now.getTime() - lastSeenAt.getTime()) / 60000))
     : null;
+
+  // First open of day: user active now, but lastSeen was before wake time or yesterday
+  const [wakeH, wakeM] = (usualWakeTime || "07:30").split(":").map(Number);
+  const wakeMins = (wakeH || 7) * 60 + (wakeM || 30);
+  const isFirstOpenOfDay = Boolean(
+    totalMinutes >= wakeMins &&
+    minutesSinceLastSeen !== null &&
+    minutesSinceLastSeen >= 6 * 60 &&
+    currentHour < 12
+  );
+
+  // Return after absence: user away for >= 4 hours during active hours (10:00 - 21:00), now back
+  const isReturningAfterAbsence = Boolean(
+    minutesSinceLastSeen !== null &&
+    minutesSinceLastSeen >= 4 * 60 &&
+    currentHour >= 11 &&
+    currentHour <= 21 &&
+    !isFirstOpenOfDay
+  );
 
   // Long continuous session check
   const isRecentSession = Boolean(
@@ -417,20 +620,37 @@ export async function buildNikkiContext(
     pausedUntil: prefs?.pausedUntil ? new Date(prefs.pausedUntil) : null,
     proactiveEnabled,
     strictness,
+    checkInFrequency,
 
     hasScheduleToday,
     scheduleItems,
     unstartedStartedItems,
+    missedActivities,
+    completedActivitiesCountToday,
+    completedTasksCountToday: completedTasksTodayCount,
 
     activeGoals,
     overdueGoals,
     staleGoals,
+    neglectedGoals,
     incompleteTasks,
     overdueTasks,
     staleTasks,
+    importantUnfinishedTasks,
+    approachingDeadlineTasks,
+    avoidanceHistory,
 
     lastUserMessageAt,
     minutesSinceLastUserMessage,
+    lastConversationTopic,
+    memories,
+
+    lastFocusSession,
+    isFocusSessionJustFinished,
+    activeFocusSession,
+
+    recentJournalEntry,
+
     lastNudge,
     recentNudgeOutcomes,
     consecutiveIgnoredOrDismissedNudges,
@@ -442,9 +662,10 @@ export async function buildNikkiContext(
 
     lastSeenAt,
     minutesSinceLastSeen,
+    isFirstOpenOfDay,
+    isReturningAfterAbsence,
     isLongContinuousSession,
     usualBedtime,
     usualWakeTime,
   };
 }
-

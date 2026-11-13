@@ -6,11 +6,22 @@ export type NikkiNudgeStatus = "created" | "delivered" | "replied" | "dismissed"
 export type NikkiTrigger =
   | "no_timetable"
   | "morning_plan"
+  | "morning_checkin"
+  | "evening_checkin"
   | "timetable_unstarted"
+  | "activity_missed"
+  | "task_unfinished"
+  | "deadline_approaching"
   | "task_overdue"
+  | "goal_neglected"
+  | "focus_finished"
   | "late_night"
+  | "unusually_late"
   | "long_session"
   | "long_silence"
+  | "user_inactive"
+  | "user_returned"
+  | "app_opened"
   | "mood_followup";
 
 export interface NikkiNudgeDocument extends Document {
@@ -33,11 +44,22 @@ const NikkiNudgeSchema = new Schema<NikkiNudgeDocument>(
       enum: [
         "no_timetable",
         "morning_plan",
+        "morning_checkin",
+        "evening_checkin",
         "timetable_unstarted",
+        "activity_missed",
+        "task_unfinished",
+        "deadline_approaching",
         "task_overdue",
+        "goal_neglected",
+        "focus_finished",
         "late_night",
+        "unusually_late",
         "long_session",
         "long_silence",
+        "user_inactive",
+        "user_returned",
+        "app_opened",
         "mood_followup",
       ],
       required: true,

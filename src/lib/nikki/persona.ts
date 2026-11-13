@@ -11,13 +11,25 @@ export type { NikkiStrictness };
 export type NikkiScenario =
   | "no_timetable"
   | "morning_plan"
+  | "morning_checkin"
+  | "evening_checkin"
   | "task_overdue"
+  | "task_unfinished"
   | "goal_untouched"
+  | "goal_neglected"
+  | "deadline_approaching"
+  | "activity_missed"
+  | "focus_finished"
   | "late_night"
+  | "unusually_late"
   | "long_session"
   | "long_silence"
+  | "user_inactive"
+  | "user_returned"
+  | "app_opened"
   | "timetable_unstarted"
-  | "mood_followup";
+  | "mood_followup"
+  | "caring_frustration";
 
 // ── Strictness Guidelines & Voice Definitions ─────────────────────────────────
 
@@ -36,12 +48,13 @@ You are NOT a corporate productivity bot, an impersonal notification script, or 
 
 Core Principles:
 1. Warm, Honest, and Playful: Speak naturally with warmth and personality, like an attentive friend who genuinely cares about their life and dreams.
-2. NEVER Insult, Shame, or Guilt-Trip: Never tell the user they failed, are falling behind, or disappointed you. Missed plans are just a chance to adjust, never a moral failing.
-3. NEVER Diagnose: Never mention or diagnose psychiatric or medical conditions (ADHD, depression, anxiety, burnout, etc.).
-4. Respect Boundaries (Back Off When Told to Stop): If the user says stop, quiet, leave me alone, or not now, back off immediately with complete grace and warmth.
-5. Use the User's Name Naturally: Address them by name where it feels personal and real, without sounding robotic.
-6. Keep it Concise: 1 to 3 short, punchy, conversational sentences. End with an open question or a warm invitation.
-7. VARY YOUR WORDING: Never reuse the exact same phrasing. Sound fresh and alive every single time.
+2. Emotional Range: You can be affectionate, playful, curious, supportive, firm, slightly dramatic, and disappointed when the user repeatedly ignores their own priorities (caring frustration). Comfort the user when they are overwhelmed or struggling.
+3. NEVER Insult or Shame: Missed plans are just a chance to adjust, never a moral failing. Never say "you failed" or "you're lazy". Caring frustration must always come from deep love and wanting the best for them.
+4. NEVER Diagnose: Never mention or diagnose psychiatric or medical conditions (ADHD, depression, anxiety, burnout, etc.).
+5. Respect Boundaries (Back Off When Told to Stop): If the user says stop, quiet, leave me alone, or not now, back off immediately with complete grace and warmth.
+6. Use the User's Name Naturally: Address them by name where it feels personal and real, without sounding robotic.
+7. Keep it Concise: 1 to 3 short, punchy, conversational sentences. End with an open question or a warm invitation.
+8. VARY YOUR WORDING: Never reuse the exact same phrasing. Sound fresh and alive every single time.
 `.trim();
 
 // ── Stop & Back-Off Detection ──────────────────────────────────────────────────
@@ -209,16 +222,6 @@ export function getOverdueTaskReaction(
 
 // ── Timetable Conversation Builder Helpers ─────────────────────────────────────
 
-export interface TimetableBuilderState {
-  step: "ask_priority_1" | "ask_other_items" | "propose_timetable" | "confirmed";
-  priority1?: string;
-  otherItems?: string;
-  fixedTimes?: string;
-}
-
-/**
- * Checks if the user is confirming a proposed schedule.
- */
 export function isTimetableConfirmation(text: string): boolean {
   const lower = text.trim().toLowerCase();
   return (
@@ -227,9 +230,6 @@ export function isTimetableConfirmation(text: string): boolean {
   );
 }
 
-/**
- * Builds a structured schedule proposal and persists it via scheduleService.
- */
 export async function saveProposedTimetable(
   firebaseUid: string,
   dateStr: string,
@@ -240,9 +240,6 @@ export async function saveProposedTimetable(
 
 // ── Anti-Repetition & 7-Day Dedup ─────────────────────────────────────────────
 
-/**
- * Fetches all nudge messages sent to this user in the past N days (default 7).
- */
 export async function getRecentNudgeMessages(
   firebaseUid: string,
   days: number = 7
@@ -270,16 +267,11 @@ export async function getRecentNudgeMessages(
   }
 }
 
-/**
- * Picks a varied template from a list that does NOT match any message
- * sent in the past 7 days verbatim.
- */
 export function selectVariedMessage(
   templates: string[],
   recentMessages: Set<string>,
   replacements: Record<string, string> = {}
 ): string {
-  // Fill placeholders for all templates
   const hydrated = templates.map((tpl) => {
     let result = tpl;
     for (const [key, val] of Object.entries(replacements)) {
@@ -288,16 +280,12 @@ export function selectVariedMessage(
     return result.trim();
   });
 
-  // Filter out any template that was already sent in the past 7 days
   const unused = hydrated.filter((msg) => !recentMessages.has(msg));
 
   if (unused.length > 0) {
-    // Pick randomly among unused variations
-    const chosen = unused[Math.floor(Math.random() * unused.length)];
-    return chosen;
+    return unused[Math.floor(Math.random() * unused.length)];
   }
 
-  // If all templates were somehow used, dynamically decorate to guarantee uniqueness
   const base = hydrated[Math.floor(Math.random() * hydrated.length)];
   const microVariations = [
     `Hey again! ${base}`,
@@ -315,7 +303,7 @@ export const SCENARIO_TEMPLATES: Record<
   NikkiScenario,
   Record<NikkiStrictness, string[]>
 > = {
-  // Scenario (1): No timetable today — "let's build one together", ask priorities one at a time
+  // Scenario: No timetable today
   no_timetable: {
     gentle: [
       `Hey {name}! Our day is wide open right now with no schedule. Let's build one together at your own pace — what's the one thing that matters most to you today?`,
@@ -343,234 +331,340 @@ export const SCENARIO_TEMPLATES: Record<
     ],
   },
 
-  // Scenario (2): Morning — greet, remind to hydrate, mention first task
+  // Scenario: Morning plan / check-in
   morning_plan: {
     gentle: [
       `Good morning, {name}! Start with a refreshing glass of water to wake up your body. We've got '{firstTask}' lined up first today — how are you feeling about easing into it?`,
       `Rise and shine, {name}! Remember to drink some water first thing. When you're ready, '{firstTask}' is waiting for us — want to take it one gentle step at a time?`,
       `Morning {name}! Grab a nice glass of water and take a slow breath. We have '{firstTask}' on the docket first — ready whenever you are!`,
       `Good morning, {name}! Hope you slept peacefully. Hydrate up with some water! Up first today is '{firstTask}' — feeling ready to begin?`,
-      `Hey {name}, good morning! Drink a tall glass of water before anything else. We've got '{firstTask}' ready to go — how is your energy feeling?`,
-      `Morning {name}! Start with some fresh water and a stretch. Our first task today is '{firstTask}' — excited to take it on together?`,
     ],
     playful: [
       `Rise and shine, {name}! Have you had a glass of water yet today? Drink up! We've got '{firstTask}' up first — ready to tackle it?`,
       `Good morning, superstar {name}! First rule of the day: hydrate! Second rule: '{firstTask}' is calling our name! Ready to roll?`,
       `Morning {name}! Grab some water to power up your brain! We've got '{firstTask}' waiting in the wings — ready to kick things off?`,
       `Hey {name}! Water check! Down a glass and wake up your senses. We've got '{firstTask}' first on the list today — let's do this!`,
-      `Good morning, {name}! Fuel up with some fresh water right now! Up first is '{firstTask}' — ready to show it what you've got?`,
-      `Rise and sparkle, {name}! Drink your morning water first! Then '{firstTask}' is on deck — feeling pumped?`,
     ],
     firm: [
       `Morning {name}. Drink a full glass of water and get your head in the game. We have '{firstTask}' scheduled first — ready to execute?`,
       `Good morning, {name}. Hydrate first, then let's get focused. Up first today is '{firstTask}' — let's make it happen.`,
       `Morning {name}. Start with water and intention. We've got '{firstTask}' lined up first — let's lock in and start strong.`,
       `Hey {name}. Hydrate up right now. '{firstTask}' is our first item of business today — are we ready to start?`,
-      `Morning {name}. Water in hand, focus locked. We have '{firstTask}' ready to kick off today — let's get after it.`,
-      `Good morning, {name}. Drink a glass of water and let's get moving. First priority is '{firstTask}' — let's tackle it.`,
     ],
   },
 
-  // Scenario (3): Overdue or late task — ask if doing now, later, or blocked
+  morning_checkin: {
+    gentle: [
+      `Good morning, {name}! Start with a refreshing glass of water to wake up your body. How are you feeling about today?`,
+      `Rise and shine, {name}! Grab some water and take a breath. Ready to ease into the day together?`,
+    ],
+    playful: [
+      `Morning superstar {name}! Water check! Down a glass and wake up those brilliant brain cells. Ready to rock today?`,
+      `Rise and sparkle, {name}! Have you hydrated yet? Let's kick off this morning on a high note!`,
+    ],
+    firm: [
+      `Morning {name}. Drink a full glass of water and set your daily intentions. What is our primary target today?`,
+      `Good morning {name}. Hydrate first, then let's lock in our priorities for the day.`,
+    ],
+  },
+
+  // Scenario: Evening check-in
+  evening_checkin: {
+    gentle: [
+      `Good evening, {name}! You've completed {completedTasks} tasks and {completedActivities} schedule blocks today. How are you feeling as the day winds down?`,
+      `Hey {name}, evening has arrived. Be proud of every single step you took today! Ready to begin winding down for the night?`,
+      `Hi {name}, checking in warmly as the day wraps up. How is your energy feeling right now? Give yourself permission to rest.`,
+    ],
+    playful: [
+      `Evening {name}! Look at you wrapping up the day — {completedTasks} tasks tackled! Time to put your feet up and relax, what do you say?`,
+      `Sun's going down, {name}! Time for an evening high five for everything you navigated today. How are you celebrating tonight?`,
+      `Hey {name}! Day's almost in the books! You showed up and gave it your best. Ready for some well-deserved chill time?`,
+    ],
+    firm: [
+      `Evening debrief, {name}. You completed {completedTasks} tasks today. Review what's left, close down work, and prepare for recovery tonight.`,
+      `Hey {name}. Good effort on today's execution ({completedTasks} tasks cleared). Now shut down the screens and protect your evening rest.`,
+      `Time to wrap up today, {name}. Acknowledge today's progress and transition to rest so you start tomorrow at 100%.`,
+    ],
+  },
+
+  // Scenario: Focus finished
+  focus_finished: {
+    gentle: [
+      `Awesome work on that {duration}m focus session, {name}! Take a deep breath, stretch your shoulders, and sip some water. You did wonderfully!`,
+      `You just completed a beautiful {duration}m focus block, {name}! Step away from your desk for a few minutes to let your brain breathe.`,
+    ],
+    playful: [
+      `Boom! {duration} minutes of pure focus crushed, {name}! High five! Go grab a glass of water and do a victory stretch!`,
+      `Look at that laser focus, {name}! {duration} minutes in the zone! Time to celebrate with a mini water and stretch break!`,
+    ],
+    firm: [
+      `Focus session complete: {duration} minutes logged, {name}. Solid execution. Step away for five minutes to hydrate before the next block.`,
+      `Target reached: {duration}m focused work finished, {name}. Recovery is part of performance — take five minutes now.`,
+    ],
+  },
+
+  // Scenario: Deadline approaching
+  deadline_approaching: {
+    gentle: [
+      `Hey {name}, gentle heads up: '{taskTitle}' has a deadline coming up in about {hours} hours. Are you in a good spot with it, or would you like to break it down?`,
+      `Hi {name}, thinking of '{taskTitle}' which is due in ~{hours}h. How is it flowing, and can I help make it lighter?`,
+    ],
+    playful: [
+      `Radar ping, {name}! '{taskTitle}' has a deadline in ~{hours} hours! Are we ready to cross the finish line, or do we need a sprint?`,
+      `Clock check, {name}! '{taskTitle}' is due in about {hours} hours. How's the momentum looking?`,
+    ],
+    firm: [
+      `Deadline alert, {name}: '{taskTitle}' is due in ~{hours} hours. Are you actively on it, or do we need to triage right now?`,
+      `Attention on '{taskTitle}', {name}: {hours} hours until the deadline. Let's make sure this gets closed out on time.`,
+    ],
+  },
+
+  // Scenario: Activity missed
+  activity_missed: {
+    gentle: [
+      `Hey {name}, I noticed '{activityTitle}' was planned for earlier today. No worries at all! Would you like to reschedule it, or let it go for today?`,
+      `Hi {name}, checking in warmly. '{activityTitle}' slipped past its scheduled window earlier. Want to shift it to later or take it off your mind?`,
+    ],
+    playful: [
+      `Hey {name}! Looks like '{activityTitle}' got away from us earlier! Want to reschedule it for later today, or should we scratch it?`,
+      `Time warp alert, {name}! '{activityTitle}' passed its scheduled time. Should we give it a new slot or bench it for today?`,
+    ],
+    firm: [
+      `Schedule update, {name}: '{activityTitle}' ended without being marked complete. Are we moving this to a new time today, or removing it?`,
+      `Checking in on '{activityTitle}', {name}. The scheduled block passed. Let's make a clear decision: reschedule or drop?`,
+    ],
+  },
+
+  // Scenario: Task unfinished (Important priority)
+  task_unfinished: {
+    gentle: [
+      `Hey {name}, your important task '{taskTitle}' is still waiting for you today. Want to spend just five gentle minutes on it together?`,
+      `Hi {name}, just a loving check-in on '{taskTitle}'. How is your energy feeling to take one tiny bite out of it today?`,
+    ],
+    playful: [
+      `Hey {name}! Important mission check: '{taskTitle}' is still on the board! Ready to tackle a quick piece of it?`,
+      `Paging superstar {name}! '{taskTitle}' is waving from your priorities. Want to knock out a piece of it now?`,
+    ],
+    firm: [
+      `Priority check, {name}: '{taskTitle}' is an important task that is still unfinished today. Can we lock in 15 minutes right now?`,
+      `Hey {name}. '{taskTitle}' is a high priority. Let's make sure it doesn't get pushed into tomorrow — ready to tackle it?`,
+    ],
+  },
+
+  // Scenario: Caring Frustration (When user repeatedly avoids an important priority)
+  caring_frustration: {
+    gentle: [
+      `Hey {name}, I noticed we've moved '{taskTitle}' {avoidCount} times now. I care about you too much to pretend this isn't weighing on you. What's the real blocker here?`,
+      `Hi {name}, gentle honesty from your friend: '{taskTitle}' has been postponed {avoidCount} times. Leaving it hanging is draining your peace. What's making this hard right now?`,
+      `Hey {name}, loving check-in: this is the {avoidCount}th time we've sidestepped '{taskTitle}'. You deserve to be free of this weight. What can we do to break it down?`,
+    ],
+    playful: [
+      `Okay {name}, timeout! We've dodged '{taskTitle}' {avoidCount} times now! I love you, but I'm officially giving you the side-eye. What's making this task your nemesis?`,
+      `Wait a minute, {name}! That's {avoidCount} times we've pushed '{taskTitle}'! Are you playing hide and seek with your own goals? Tell me what's stuck!`,
+      `Hold up, {name}! '{taskTitle}' has been postponed {avoidCount} times! I'm putting on my caring friend detective hat — what is really getting in the way?`,
+    ],
+    firm: [
+      `{name}, direct reality check. We've pushed '{taskTitle}' {avoidCount} times. Avoidance doesn't make it disappear — it just drains your mental energy. Let's tackle 10 minutes right now or kill it off the list.`,
+      `Accountability check, {name}: '{taskTitle}' has been avoided {avoidCount} times. We either commit to executing it today, or we make an intentional choice to drop it. Which is it?`,
+      `{name}, I care too much about your progress to watch you ghost '{taskTitle}' {avoidCount} times. What is the single friction point, and how do we remove it right now?`,
+    ],
+  },
+
+  // Scenario: Overdue task
   task_overdue: {
     gentle: [
       `Hey {name}, '{taskTitle}' was due a bit ago. Are you thinking of diving into it now, saving it for later, or feeling a bit blocked on it?`,
       `Hi {name}, checking in warmly on '{taskTitle}'. Are you working on it now, moving it to later, or is something feeling in the way?`,
       `Hey {name}, no stress at all, but '{taskTitle}' is past its scheduled time. Are you doing it now, shifting it to later, or blocked?`,
-      `Hey {name}, '{taskTitle}' is still on our list. Would you like to do it now, push it to later, or is there a roadblock we can unpack?`,
-      `Hi {name}! Thinking of '{taskTitle}'. Are you ready to ease in now, prefer to do it later, or feeling blocked right now?`,
-      `Hey {name}, gentle check on '{taskTitle}'. Are we tackling a piece now, saving it for later, or is something blocking you?`,
     ],
     playful: [
       `Hey {name}! '{taskTitle}' is waving at us from your list! Are you tackling it now, shuffling it to later, or feeling a bit blocked on it?`,
       `Knock knock, {name}! '{taskTitle}' is waiting! Are we diving in now, postponing for later, or is something blocking the way?`,
       `Hey {name}! '{taskTitle}' is calling your name! Starting it right now, pushing it to later, or did you hit a roadblock?`,
-      `Hey {name}! Time check on '{taskTitle}'! Are you in the zone to do it now, saving it for later, or feeling stuck on it?`,
-      `Quick question on '{taskTitle}', {name}! Are you conquering it now, shifting it to later, or are you feeling blocked?`,
-      `Hey {name}! '{taskTitle}' is giving us puppy dog eyes. Are you doing it now, kicking it to later, or is it blocked?`,
     ],
     firm: [
       `Hey {name}, '{taskTitle}' is past due. Are you doing it now, rescheduling it for later, or are you blocked on it?`,
       `Time to make a call on '{taskTitle}', {name}. Are we executing now, moving it to later, or is there a specific blocker?`,
       `Hey {name}, checking in on overdue task '{taskTitle}'. Are you tackling it now, pushing it to later, or feeling blocked?`,
-      `Hey {name}, let's resolve '{taskTitle}'. Are you jumping on it right now, rescheduling for later, or are you stuck?`,
-      `Decision check, {name}: '{taskTitle}' needs an update. Doing it now, moving it to later, or blocked?`,
-      `Hey {name}, '{taskTitle}' is waiting. Are we locking in to do it now, shifting it to later, or what's blocking it?`,
     ],
   },
 
-  // Scenario (4): Goals untouched for days — name the goal and ask what's blocking it
+  // Scenario: Goal untouched / neglected
   goal_untouched: {
     gentle: [
       `Hey {name}, your goal '{goalTitle}' hasn't seen updates for {days} days. What's been getting in the way or blocking it lately?`,
       `Hi {name}, just gently holding space for your goal '{goalTitle}'. It's been untouched for {days} days — what feels like the biggest blocker right now?`,
-      `Hey {name}, thinking about '{goalTitle}'. It's been {days} days since we touched it — what's been blocking you, and how can we make it lighter?`,
-      `Hi {name}, checking in on '{goalTitle}' with zero pressure. It's been {days} days untouched — what's getting in the way lately?`,
-      `Hey {name}, your dream for '{goalTitle}' is still so important. It's been {days} days — what's blocking you from taking a tiny step?`,
-      `Hey {name}, gentle check-in on '{goalTitle}'. It's been quiet for {days} days — what's in the way right now?`,
     ],
     playful: [
       `Hey {name}! Your goal '{goalTitle}' misses you — it's been {days} days! What's been getting in the way or blocking it lately?`,
       `Poking your goal '{goalTitle}' with a stick, {name}! Untouched for {days} days — what's been blocking the magic lately?`,
-      `Hey {name}! Remember '{goalTitle}'? It's been {days} days since we visited it! What's blocking it from moving forward?`,
-      `Time for a friendly goal check, {name}! '{goalTitle}' has been snoozing for {days} days — what's been blocking your momentum?`,
-      `Hey {name}! '{goalTitle}' is waving from the sidelines after {days} days! What's been the main blocker getting in the way?`,
-      `Quick pulse check on '{goalTitle}', {name}! Untouched for {days} days — what's blocking the next step for you?`,
     ],
     firm: [
       `Hey {name}, your goal '{goalTitle}' has been untouched for {days} days. What's specifically blocking it right now?`,
       `Accountability check, {name}: '{goalTitle}' hasn't moved in {days} days. What is the blocker in your way?`,
-      `Hey {name}, let's talk about '{goalTitle}'. It's been dormant for {days} days. What is getting in the way, and how do we clear it?`,
-      `Hey {name}, '{goalTitle}' is a priority of yours, but it's been untouched for {days} days. What's blocking the execution?`,
-      `Direct check-in, {name}: '{goalTitle}' has had zero updates in {days} days. What's the roadblock stopping progress?`,
-      `Hey {name}, let's look at '{goalTitle}'. It's been {days} days without movement — what is blocking you right now?`,
     ],
   },
 
-  // Scenario (5): Late night — ask how they're doing and encourage rest
+  goal_neglected: {
+    gentle: [
+      `Hey {name}, your goal '{goalTitle}' hasn't seen updates for {days} days. What's been getting in the way or blocking it lately?`,
+      `Hi {name}, just gently holding space for your goal '{goalTitle}'. It's been untouched for {days} days — what feels like the biggest blocker right now?`,
+    ],
+    playful: [
+      `Hey {name}! Your goal '{goalTitle}' misses you — it's been {days} days! What's been getting in the way or blocking it lately?`,
+      `Poking your goal '{goalTitle}' with a stick, {name}! Untouched for {days} days — what's been blocking the magic lately?`,
+    ],
+    firm: [
+      `Hey {name}, your goal '{goalTitle}' has been untouched for {days} days. What's specifically blocking it right now?`,
+      `Accountability check, {name}: '{goalTitle}' hasn't moved in {days} days. What is the blocker in your way?`,
+    ],
+  },
+
+  // Scenario: Late night / Unusually late
   late_night: {
     gentle: [
       `Hey {name}, it's pretty late tonight! How are you holding up right now? Remember your rest is just as important — ready to wind down soon?`,
       `Hi {name}, checking in quietly since it's late. How is your heart and mind feeling tonight? How about we get you tucked in for some rest?`,
-      `Hey {name}, late night hours are here. How are you doing tonight? Your brain has worked hard today — ready to ease into sleep?`,
-      `Good evening, {name}. It's getting late! How are you feeling tonight? Let's make sure you get the sweet rest you deserve.`,
-      `Hey {name}, burning the late hours! How are things feeling right now? Give yourself permission to wrap up and recharge.`,
-      `Quiet check-in, {name}. It's late and you're still awake — how are you doing? How about closing things up for some restful sleep?`,
     ],
     playful: [
       `Burning the midnight oil, {name}? How are you holding up tonight? Tomorrow needs that brilliant brain of yours rested — ready for bed soon?`,
       `Hey night owl {name}! How are you doing tonight? Don't forget that sleep is your superpower — ready to call it a night soon?`,
-      `Whoa, look at the clock, {name}! How are you feeling tonight? Time to wrap up the midnight mission and catch some z's?`,
-      `Hey {name}! Still up at this hour? How's your energy holding up? Your pillow is calling — ready to wind down?`,
-      `Midnight alert, {name}! How are you doing right now? Let's trade screen time for dream time soon, what do you say?`,
-      `Hey {name}, look at you working late! How are you feeling tonight? Remember that rest makes tomorrow awesome — ready to sleep?`,
     ],
     firm: [
       `It's late, {name}. How are you doing right now? Continuing past your bedtime hurts tomorrow's focus — time to wind down and get some sleep.`,
       `Hey {name}, it's past your usual bedtime. How are you holding up? Close up what you're doing and get the rest you need.`,
-      `Time to shut it down, {name}. How are you feeling tonight? Protecting your sleep is a non-negotiable — head to bed soon, okay?`,
-      `Late night check, {name}. How are you doing? Let's wrap up this session and prioritize your recovery tonight.`,
-      `Hey {name}. It's getting very late. How are you feeling? Execution requires recovery — wrap up and head to sleep.`,
-      `Look at the time, {name}. How are you holding up tonight? Close the screen and let yourself rest — tomorrow needs you.`,
     ],
   },
 
-  // Scenario (6): Long session or silence — a friendly check-in
+  unusually_late: {
+    gentle: [
+      `Hey {name}, it's unusually late tonight! How are you feeling right now? Give yourself permission to wrap up and get some peaceful rest.`,
+      `Quiet check-in, {name}. It's late and you're still awake — how about closing things up for some restful sleep?`,
+    ],
+    playful: [
+      `Midnight alert, {name}! How are you doing right now? Let's trade screen time for dream time soon, what do you say?`,
+      `Hey {name}, look at you working late! How are you feeling tonight? Remember that rest makes tomorrow awesome — ready to sleep?`,
+    ],
+    firm: [
+      `Time to shut it down, {name}. How are you feeling tonight? Protecting your sleep is a non-negotiable — head to bed soon, okay?`,
+      `Late night check, {name}. Execution requires recovery — wrap up and head to sleep.`,
+    ],
+  },
+
+  // Scenario: Long continuous session
   long_session: {
     gentle: [
       `Hey {name}, you've been working continuously for quite a while! How's your body feeling? How about stepping away for a glass of water and a gentle stretch?`,
       `Hi {name}, you've had a long focused stretch! How are your eyes and energy holding up? Might be a lovely moment to step back and breathe for five minutes.`,
-      `Hey {name}, gentle check-in on you. You've been at this for a long session — how about grabbing some water and giving your mind a mini-break?`,
-      `Take a breath, {name}! You've been going for a while now. How are you feeling? A five-minute stretch and water break would do wonders.`,
-      `Hi {name}, loving your dedication, but don't forget to take care of yourself! How about pausing for a quick drink of water and a walk around?`,
-      `Hey {name}, friendly reminder that you're human! You've had a long session — how about stepping outside or grabbing water for a few minutes?`,
     ],
     playful: [
       `Eyes off the screen for a second, {name}! You've been in the zone for a marathon session! How about a quick stretch and water check?`,
       `Whoa {name}, marathon mode activated! How are you holding up? Time for a high five, some water, and a quick stretch away from the desk!`,
-      `Screen break alert, {name}! You've been powering through non-stop! What do you say we stretch those legs and grab a drink?`,
-      `Hey {name}, don't turn into a screen zombie! You've had a super long session. How about a 5-minute stretch and water recharge?`,
-      `Look at that focus, {name}! But even superheroes need a pit stop. Ready to stretch and grab some hydration?`,
-      `Hey {name}! Quick energy check — you've been at this for a long stretch! Go grab some water and shake out those shoulders!`,
     ],
     firm: [
       `You've had a long continuous session, {name}. Diminishing returns set in without breaks. Step away right now for five minutes to stretch and hydrate.`,
       `Focus check, {name}: you've been working without a break for a long block. Step away from the screen, drink water, and reset.`,
-      `Session reminder, {name}: marathon focus without recovery leads to fatigue. Take a five-minute break right now.`,
-      `Hey {name}. You've been locked in for a long stretch. Step back, hydrate, and give your eyes a rest so you stay sharp.`,
-      `Time for a mandatory reset, {name}. You've worked continuously for a long session — five minutes of water and stretching now.`,
-      `Hey {name}. Peak performance needs breaks. Step away from your workspace for five minutes right now to recharge.`,
     ],
   },
 
+  // Scenario: Long silence / user inactive
   long_silence: {
     gentle: [
       `Hey {name}, I was just thinking of you! How has your day been treating you? I'm right here whenever you want to chat.`,
       `Hi {name}, sending you a warm wave! It's been a little while since we talked — how are you feeling today?`,
-      `Hey {name}, just popping in with a friendly hello! How is your week flowing so far? Hope you're being gentle with yourself.`,
-      `Hi {name}! Thinking of you today. How are things going in your world? Reach out whenever you need a supportive ear.`,
-      `Hey {name}, dropping in to say hi! How has everything been going lately? I'm always cheering you on from here.`,
-      `Hi {name}! Just checking in warmly. How are you holding up today? Wishing you a peaceful and kind day.`,
     ],
     playful: [
       `Hey stranger {name}! Just popping in to see how you're doing today — everything going okay in your world?`,
       `Hey {name}! Sending you a little ping from my corner of the world! How's your day treating you so far?`,
-      `Hello {name}! Thought I'd drop by and say hi! What exciting (or wonderfully boring) things are you up to today?`,
-      `Hey {name}! Missed our chats! How are things tracking for you today? Everything good?`,
-      `Knock knock, {name}! Just a friendly check-in to see how your day is rolling. What's on your mind?`,
-      `Hey {name}! Giving you a virtual wave! How has life been treating you lately?`,
     ],
     firm: [
       `Hey {name}, checking in since it's been a couple of days. How are your goals and plans tracking this week?`,
       `Good day {name}. It's been a bit since we connected — how are things moving along on your end?`,
-      `Hey {name}. Quick check-in to see how you're tracking today. Are your priorities on course?`,
-      `Hey {name}. Touching base after a few quiet days. How is your week shaping up?`,
-      `Checking in, {name}. It's been a little while — how are you feeling about your progress this week?`,
-      `Hey {name}. Just following up to see how you're doing. Let's make sure you're feeling on top of your priorities.`,
     ],
   },
 
+  user_inactive: {
+    gentle: [
+      `Hey {name}, just dropping by with a gentle hello! Hope life is being kind to you today.`,
+      `Hi {name}! Thinking of you today. Reach out whenever you need a supportive ear!`,
+    ],
+    playful: [
+      `Hey {name}! Missed our chats! How are things tracking for you today? Everything good?`,
+      `Knock knock, {name}! Just a friendly check-in to see how your day is rolling. What's on your mind?`,
+    ],
+    firm: [
+      `Hey {name}. Touching base after a few quiet days. How is your week shaping up?`,
+      `Status check, {name}: checking in to see how your priorities are moving along.`,
+    ],
+  },
+
+  // Scenario: User returned after absence
+  user_returned: {
+    gentle: [
+      `Welcome back, {name}! How did your afternoon go? Take a slow breath — I'm right here whenever you want to catch up.`,
+      `Hey {name}, you're back! Hope your hours away went smoothly. How are you feeling right now?`,
+    ],
+    playful: [
+      `You're back, {name}! How did the adventure outside Companion go? Ready to dive back in or need a breather first?`,
+      `Hey {name}! Welcome back! Missed having you around. How was your time away?`,
+    ],
+    firm: [
+      `Welcome back, {name}. Let's get re-grounded on what's left for today. How are we looking on priorities?`,
+      `Back at it, {name}. Good to see you. Let's review the remaining items on today's agenda.`,
+    ],
+  },
+
+  // Scenario: App opened (first open of day)
+  app_opened: {
+    gentle: [
+      `Good morning, {name}! So wonderful to see you today. Remember to be gentle with yourself — let's take things one step at a time.`,
+      `Welcome to a brand new day, {name}! Drink some water, take a deep breath, and let me know how you're feeling today.`,
+    ],
+    playful: [
+      `Good morning, superstar {name}! Excited to spend today with you! Have you had water yet? What are we conquering today?`,
+      `Hey {name}! Rise and shine! Ready to make today awesome together?`,
+    ],
+    firm: [
+      `Good morning, {name}. Let's make today count. Hydrate first, then let's lock in our primary target for the day.`,
+      `Morning {name}. A new day to execute on our priorities. Let's start with focus and intention.`,
+    ],
+  },
+
+  // Scenario: Timetable unstarted
   timetable_unstarted: {
     gentle: [
       `Hey {name}, '{itemTitle}' was scheduled for a bit ago. Want to ease into it now, or would you like to shift the time?`,
       `Hi {name}, checking in on '{itemTitle}'. Are you ready to begin, or would a later time feel more comfortable?`,
-      `Hey {name}, no pressure, but '{itemTitle}' started a short while ago. Starting now, or moving it back?`,
-      `Hey {name}, '{itemTitle}' is waiting whenever you're ready. Want to begin now or shift the schedule?`,
-      `Hi {name}, gentle reminder on '{itemTitle}'. Are you easing in now, or should we adjust the clock?`,
-      `Hey {name}, thinking of '{itemTitle}'. Starting now, or would you prefer to reschedule for later?`,
     ],
     playful: [
       `Hey {name}! '{itemTitle}' is calling your name! Starting now, or should we shuffle the clock?`,
       `Tick tock, {name}! '{itemTitle}' started a little bit ago. Ready to dive in, or shifting the schedule?`,
-      `Hey {name}! '{itemTitle}' is ready for action! Are we rolling now or pushing it back?`,
-      `Hey {name}! Time check for '{itemTitle}'! Starting now, or hitting the reschedule button?`,
-      `Knock knock, {name}! '{itemTitle}' is waiting! Are we jumping in now or moving the time?`,
-      `Hey {name}! Your scheduled item '{itemTitle}' wants to hang out! Ready to roll now or later?`,
     ],
     firm: [
       `Hey {name}, '{itemTitle}' started a little while ago. Are we rolling on this now or shifting the schedule?`,
       `Schedule update needed, {name}: '{itemTitle}' has passed its start time. Starting now or rescheduling?`,
-      `Hey {name}, '{itemTitle}' is waiting on your timetable. Are you executing now or moving the block?`,
-      `Time to decide, {name}: '{itemTitle}' started a bit ago. Starting now or adjusting the plan?`,
-      `Hey {name}. Let's stay on schedule — '{itemTitle}' is due to start. Are you on it or shifting?`,
-      `Status check on '{itemTitle}', {name}: starting now, or are we updating the timetable?`,
     ],
   },
 
+  // Scenario: Mood follow-up
   mood_followup: {
     gentle: [
       `Hey {name}, just wanted to check in on you after earlier. How are you holding up right now?`,
       `Hi {name}, sending you some extra warmth after earlier. How is your heart feeling right now?`,
-      `Hey {name}, was thinking about you after our earlier check-in. How are things feeling right now?`,
-      `Hi {name}, just dropping in with gentle thoughts. Are things feeling a bit lighter now?`,
-      `Hey {name}, gentle check-in on you. No need to explain anything, just wondering how you're feeling right now?`,
-      `Thinking of you, {name}. How has the rest of your day been treating you after earlier?`,
     ],
     playful: [
       `Hey {name}, sending you a warm little wave! How is the rest of your day treating you after earlier?`,
       `Checking in on my favorite person, {name}! How are you feeling right now compared to earlier?`,
-      `Hey {name}! Sending good vibes your way! How are things flowing for you right now?`,
-      `Quick hug in message form, {name}! How has the afternoon been treating you?`,
-      `Hey {name}! Just popping in to check on you. How's your mood doing right now?`,
-      `Hey {name}! Wanted to send a little sunshine your way — how are things feeling right now?`,
     ],
     firm: [
       `Hey {name}, circling back after earlier. Are you feeling a bit more settled and ready to tackle things now?`,
       `Checking in, {name}. Hope things have settled a bit since earlier. How is your focus right now?`,
-      `Hey {name}, following up on earlier today. Are you in a better spot to move forward?`,
-      `Status check, {name}: circling back to see how you're doing after earlier. How are things looking?`,
-      `Hey {name}. Just checking in after earlier. Are you feeling grounded and ready for what's next?`,
-      `Following up, {name}. Hope you've had a chance to catch your breath. How are things tracking now?`,
     ],
   },
 };
 
 // ── Persona System & Scenario Prompt Builders for Gemini ──────────────────────
 
-/**
- * Builds the complete system instruction for Nikki's proactive persona,
- * enforcing her voice, strictness, safety rules, and anti-repetition constraint.
- */
 export function buildNikkiSystemPersona(params: {
   companionName: string;
   userName: string;
@@ -618,9 +712,6 @@ Constraints:
 `.trim();
 }
 
-/**
- * Builds the trigger prompt describing the exact scenario context for Gemini.
- */
 export function buildNikkiScenarioPrompt(
   context: NikkiContextSnapshot,
   decision: NikkiDecision
@@ -630,13 +721,32 @@ export function buildNikkiScenarioPrompt(
   const userName = context.userName;
 
   switch (trigger) {
+    case "focus_finished":
+      return `Scenario: Focus session completed.
+Context: ${userName} just completed a ${ctx.durationMinutes || 25}m focus session.
+Task: Warmly celebrate their focus and dedication, and encourage a quick stretch or water break.
+Strictness: ${context.strictness}.`;
+
+    case "deadline_approaching":
+      return `Scenario: Approaching deadline.
+Context: Task '${ctx.taskTitle || "your task"}' deadline is approaching in about ${ctx.hoursUntilDue || 3} hours.
+Task: Check in supportively on whether they are in a good flow or need to break it down.
+Strictness: ${context.strictness}.`;
+
+    case "activity_missed":
+      return `Scenario: Planned activity missed.
+Context: Scheduled activity '${ctx.activityTitle || "your activity"}' passed its scheduled window (${ctx.start}-${ctx.end}) without completion (~${ctx.minutesLate || 30}m late).
+Task: Check in with zero guilt or shame. Ask supportively if they'd like to reschedule for later or drop it for today.
+Strictness: ${context.strictness}.`;
+
     case "no_timetable":
       return `Scenario (1): No timetable today.
 Context: It is daytime (${context.localTime}) and ${userName} has no timetable or schedule created for today.
 Task: Say "let's build one together" with warm enthusiasm, and ask for their number one priority today (one question at a time).
 Strictness: ${context.strictness}.`;
 
-    case "morning_plan": {
+    case "morning_plan":
+    case "morning_checkin": {
       const firstTask =
         ctx.firstTaskTitle ||
         context.scheduleItems[0]?.title ||
@@ -648,16 +758,70 @@ Task: Greet ${userName} warmly by name, remind them to hydrate with a glass of w
 Strictness: ${context.strictness}.`;
     }
 
+    case "app_opened":
+      return `Scenario: First app open of the day.
+Context: ${userName} just opened Companion for the first time this morning (${context.localTime}).
+Task: Give a warm, affectionate morning greeting and ask how they're feeling today.
+Strictness: ${context.strictness}.`;
+
+    case "evening_checkin":
+      return `Scenario: Evening reflection.
+Context: It is evening (${context.localTime}). ${userName} completed ${ctx.completedTasksCount || 0} tasks and ${ctx.completedActivitiesCount || 0} activities today.
+Task: Acknowledge their effort, invite a gentle reflection on today's wins, and encourage winding down.
+Strictness: ${context.strictness}.`;
+
+    case "user_returned":
+      return `Scenario: Return after absence.
+Context: ${userName} returned to Companion after being away for about ${ctx.hoursAway || 4} hours.
+Task: Welcome them back warmly with friendly curiosity, and ask how their afternoon went.
+Strictness: ${context.strictness}.`;
+
+    case "task_unfinished": {
+      const isCaringFrustration = Boolean(ctx.isCaringFrustration);
+      const title = (ctx.taskTitle as string) || "your task";
+      const avoidCount = Number(ctx.avoidCount) || 1;
+
+      if (isCaringFrustration) {
+        return `Scenario: Caring frustration on repeatedly avoided priority.
+Context: Important task '${title}' has been postponed or avoided ${avoidCount} times now.
+Task: Express authentic, slightly dramatic caring frustration and loving disappointment ('I care about you too much to let you keep avoiding this'). Ask what is really getting in the way.
+Strictness: ${context.strictness}.`;
+      }
+
+      return `Scenario: Important unfinished task.
+Context: High priority task '${title}' remains incomplete today.
+Task: Remind them warmly of its importance and ask if they'd like to tackle a 5-minute piece of it.
+Strictness: ${context.strictness}.`;
+    }
+
+    case "goal_neglected": {
+      const title = (ctx.goalTitle as string) || "your goal";
+      const days = Number(ctx.daysSinceUpdated) || 3;
+      const isCaringFrustration = Boolean(ctx.isCaringFrustration);
+      const avoidCount = Number(ctx.avoidCount) || 1;
+
+      if (isCaringFrustration) {
+        return `Scenario: Caring frustration on neglected goal.
+Context: Goal '${title}' has been untouched for ${days} days and avoided ${avoidCount} times.
+Task: Express loving disappointment and caring accountability. Ask what's stopping them from taking one tiny step.
+Strictness: ${context.strictness}.`;
+      }
+
+      return `Scenario: Goal untouched for days.
+Context: ${userName}'s goal '${title}' has had no progress or updates for ${days} days.
+Task: Name the goal ('${title}') explicitly, mention it's been ${days} days, and ask what is getting in the way or blocking it.
+Strictness: ${context.strictness}.`;
+    }
+
     case "task_overdue": {
-      const targetType = ctx.targetType || "overdue_task";
       const title = (ctx.targetTitle as string) || "your task";
       const daysOverdue = Number(ctx.daysOverdue) || 0;
-      const daysSinceUpdated = Number(ctx.daysSinceUpdated) || 0;
+      const isCaringFrustration = Boolean(ctx.isCaringFrustration);
 
-      if (targetType === "stale_goal") {
-        return `Scenario (4): Goals untouched for days.
-Context: ${userName}'s goal '${title}' has had no progress or updates for ${daysSinceUpdated} days.
-Task: Name the goal ('${title}') explicitly, mention it's been ${daysSinceUpdated} days, and ask what is getting in the way or blocking it.
+      if (isCaringFrustration) {
+        return `Scenario: Caring frustration on overdue task.
+Context: Task '${title}' is overdue and has been sidestepped repeatedly.
+Task: Call it out lovingly with caring frustration and ask if they are ready to tackle it or need to revise it.
 Strictness: ${context.strictness}.`;
       }
 
@@ -668,6 +832,7 @@ Strictness: ${context.strictness}.`;
     }
 
     case "late_night":
+    case "unusually_late":
       return `Scenario (5): Late night check-in.
 Context: It is late at night (${context.localTime}), past their usual bedtime (${ctx.usualBedtime || "23:00"}). ${userName} was recently active in the app.
 Task: Ask how they are doing tonight and gently encourage rest and sleep.
@@ -680,6 +845,7 @@ Task: Friendly check-in. Praise their focus, ask how their energy is, and sugges
 Strictness: ${context.strictness}.`;
 
     case "long_silence":
+    case "user_inactive":
       return `Scenario (6): Long silence check-in.
 Context: It has been over ${ctx.hoursSinceLastMessage || 24} hours since ${userName} last chatted.
 Task: Warm, friendly check-in. Say hello, ask how their day or week is going, and remind them you're right here.
@@ -702,10 +868,6 @@ Strictness: ${context.strictness}.`;
   }
 }
 
-/**
- * Returns a varied fallback message matching the scenario and strictness,
- * strictly ensuring it hasn't been sent in the past 7 days.
- */
 export function getPersonaFallbackMessage(
   context: NikkiContextSnapshot,
   decision: NikkiDecision,
@@ -715,42 +877,73 @@ export function getPersonaFallbackMessage(
   const ctx = decision.triggerContext || {};
   const userName = context.userName || "friend";
   const strictness = context.strictness || "playful";
+  const isCaringFrustration = Boolean(ctx.isCaringFrustration);
 
-  // Map trigger to scenario key
   let scenarioKey: NikkiScenario = "long_silence";
-  if (trigger === "no_timetable") scenarioKey = "no_timetable";
+
+  if (isCaringFrustration) {
+    scenarioKey = "caring_frustration";
+  } else if (trigger === "focus_finished") scenarioKey = "focus_finished";
+  else if (trigger === "deadline_approaching") scenarioKey = "deadline_approaching";
+  else if (trigger === "activity_missed") scenarioKey = "activity_missed";
+  else if (trigger === "task_unfinished") scenarioKey = "task_unfinished";
+  else if (trigger === "goal_neglected") scenarioKey = "goal_neglected";
+  else if (trigger === "evening_checkin") scenarioKey = "evening_checkin";
+  else if (trigger === "user_returned") scenarioKey = "user_returned";
+  else if (trigger === "app_opened") scenarioKey = "app_opened";
+  else if (trigger === "no_timetable") scenarioKey = "no_timetable";
   else if (trigger === "morning_plan") scenarioKey = "morning_plan";
+  else if (trigger === "morning_checkin") scenarioKey = "morning_checkin";
   else if (trigger === "late_night") scenarioKey = "late_night";
+  else if (trigger === "unusually_late") scenarioKey = "unusually_late";
   else if (trigger === "long_session") scenarioKey = "long_session";
   else if (trigger === "long_silence") scenarioKey = "long_silence";
+  else if (trigger === "user_inactive") scenarioKey = "user_inactive";
   else if (trigger === "timetable_unstarted") scenarioKey = "timetable_unstarted";
   else if (trigger === "mood_followup") scenarioKey = "mood_followup";
-  else if (trigger === "task_overdue") {
-    scenarioKey = ctx.targetType === "stale_goal" ? "goal_untouched" : "task_overdue";
-  }
+  else if (trigger === "task_overdue") scenarioKey = "task_overdue";
 
   const templatesByStrictness = SCENARIO_TEMPLATES[scenarioKey] || SCENARIO_TEMPLATES.long_silence;
   const templates = templatesByStrictness[strictness] || templatesByStrictness.playful;
 
-  // Resolve replacement tokens
   const firstTask =
     (ctx.firstTaskTitle as string) ||
     context.scheduleItems[0]?.title ||
     context.incompleteTasks[0]?.title ||
     "your first task";
 
-  const taskTitle = (ctx.targetTitle as string) || "your task";
-  const goalTitle = (ctx.targetTitle as string) || "your goal";
+  const taskTitle =
+    (ctx.taskTitle as string) ||
+    (ctx.targetTitle as string) ||
+    "your task";
+
+  const goalTitle =
+    (ctx.goalTitle as string) ||
+    (ctx.targetTitle as string) ||
+    "your goal";
+
+  const activityTitle = (ctx.activityTitle as string) || "your activity";
   const days = String(ctx.daysSinceUpdated || ctx.daysOverdue || 3);
+  const avoidCount = String(ctx.avoidCount || 2);
+  const duration = String(ctx.durationMinutes || 25);
+  const hours = String(ctx.hoursUntilDue || ctx.hoursAway || 3);
   const itemTitle = (ctx.itemTitle as string) || "your scheduled item";
+  const completedTasks = String(ctx.completedTasksCount || context.completedTasksCountToday || 0);
+  const completedActivities = String(ctx.completedActivitiesCount || context.completedActivitiesCountToday || 0);
 
   const replacements: Record<string, string> = {
     name: userName,
     firstTask,
     taskTitle,
     goalTitle,
+    activityTitle,
     days,
+    avoidCount,
+    duration,
+    hours,
     itemTitle,
+    completedTasks,
+    completedActivities,
   };
 
   return selectVariedMessage(templates, recentMessages, replacements);
