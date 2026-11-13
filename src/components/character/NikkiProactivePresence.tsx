@@ -8,10 +8,10 @@
  * process or floating system window when Companion is closed.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Sparkles, MessageCircle, X, Clock, Calendar, Minimize2, Move, Eye, Hand, Coffee } from "lucide-react";
+import { Sparkles, MessageCircle, X, Clock, Calendar, Minimize2, Move, Eye, Hand, Coffee, Mic, MicOff, Send, BellOff } from "lucide-react";
 import { useNotifications } from "@/context/NotificationContext";
 import { useProfile } from "@/context/ProfileContext";
 import { useAuth } from "@/context/AuthContext";
@@ -360,6 +360,20 @@ interface BreakSessionState {
   durationMinutes: number;
 }
 
+interface FloatingNudgeState {
+  id: string;
+  trigger: string;
+  message: string;
+  strictness?: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface FloatingBubbleMessage {
+  id: string;
+  role: "nikki" | "user";
+  content: string;
+}
+
 export function NikkiProactivePresence() {
   const router = useRouter();
   const reduceMotion = useReducedMotion();
@@ -395,6 +409,15 @@ export function NikkiProactivePresence() {
   } | null>(null);
   const [breakPickerOpen, setBreakPickerOpen] = useState(false);
   const [customMinutesInput, setCustomMinutesInput] = useState("");
+
+  // ── Conversational Presence & Nikki Nudge State ───────────────────────────
+  const [activeNudge, setActiveNudge] = useState<FloatingNudgeState | null>(null);
+  const [isConversationalOpen, setIsConversationalOpen] = useState(false);
+  const [bubbleConversation, setBubbleConversation] = useState<FloatingBubbleMessage[]>([]);
+  const [inputText, setInputText] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
 
   // Restore minimized state from this browser session
   useEffect(() => {
@@ -461,6 +484,61 @@ export function NikkiProactivePresence() {
     const interval = setInterval(sendHeartbeat, 5 * 60 * 1000); // every 5 minutes
     return () => clearInterval(interval);
   }, [firebaseUser]);
+
+  // ── Nudge Poller: fetch pending nudges when app opens and every 60s ────────
+  const fetchPendingNudge = useCallback(async () => {
+    if (!firebaseUser) return;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    try {
+      const res = await authFetch("/api/nikki/nudge");
+      if (!res.ok) return;
+      const env = await res.json();
+      if (env?.data) {
+        setActiveNudge(env.data);
+        setBubbleConversation([
+          { id: env.data.id, role: "nikki", content: env.data.message },
+        ]);
+        setIsConversationalOpen(true);
+        setIsMinimized(false);
+      }
+    } catch {
+      /* best-effort */
+    }
+  }, [firebaseUser]);
+
+  useEffect(() => {
+    if (!firebaseUser) return;
+    fetchPendingNudge();
+
+    // Check URL param ?openNikki=... on mount (e.g. from push click)
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const openNikkiParam = params.get("openNikki");
+      if (openNikkiParam) {
+        setIsConversationalOpen(true);
+        setIsMinimized(false);
+        fetchPendingNudge();
+        try {
+          const cleanUrl = window.location.pathname;
+          window.history.replaceState({}, "", cleanUrl);
+        } catch {}
+      }
+    }
+
+    const interval = setInterval(fetchPendingNudge, 60_000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        fetchPendingNudge();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [firebaseUser, fetchPendingNudge]);
 
   // ── Load today's schedule once on mount or timezone change ─────────────────
   const fetchTodaySchedule = useCallback(() => {
@@ -675,6 +753,170 @@ export function NikkiProactivePresence() {
     if (!firebaseUser) return;
     authFetch("/api/schedule/break", { method: "DELETE" }).catch(() => {});
   }, [firebaseUser]);
+
+  // ── Conversational Presence Handlers ───────────────────────────────────────
+  const quickReplyChips = useMemo(() => {
+    const trigger = activeNudge?.trigger;
+    if (trigger === "timetable_unstarted") {
+      return ["Starting now 💪", "Move 15m", "Skip today"];
+    }
+    if (trigger === "morning_plan") {
+      return ["Got my water! 💧", "Ready to plan", "Taking it slow"];
+    }
+    if (trigger === "no_timetable") {
+      return ["Let's make a plan", "Free day today"];
+    }
+    if (trigger === "mood_followup") {
+      return ["Feeling a bit better", "Still overwhelmed", "Just resting"];
+    }
+    if (trigger === "late_night") {
+      return ["Heading to bed 🌙", "Just 5 more minutes"];
+    }
+    if (trigger === "long_session") {
+      return ["Taking a break", "Finishing one thing"];
+    }
+    if (trigger === "task_overdue") {
+      return ["Starting a tiny piece", "Move deadline"];
+    }
+    if (trigger === "long_silence") {
+      return ["Doing well!", "Missed you!"];
+    }
+    return ["I'm doing good", "Help me plan", `Bye ${companionName}`];
+  }, [activeNudge?.trigger, companionName]);
+
+  const toggleVoice = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Voice speech recognition is not supported in this browser.");
+      return;
+    }
+    if (isListening) {
+      try { recognitionRef.current?.stop(); } catch {}
+      setIsListening(false);
+      return;
+    }
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = "en-US";
+      recognition.interimResults = true;
+      recognition.continuous = false;
+      recognition.onresult = (e: any) => {
+        const transcript = Array.from(e.results)
+          .map((r: any) => r[0]?.transcript || "")
+          .join("");
+        setInputText(transcript);
+      };
+      recognition.onend = () => setIsListening(false);
+      recognition.onerror = () => setIsListening(false);
+      recognitionRef.current = recognition;
+      recognition.start();
+      setIsListening(true);
+    } catch {
+      setIsListening(false);
+    }
+  }, [isListening]);
+
+  const handleSendReply = useCallback(
+    async (textToSend?: string) => {
+      const text = (textToSend ?? inputText).trim();
+      if (!text || isSubmitting) return;
+
+      setInputText("");
+      setIsSubmitting(true);
+
+      // Handle user saying goodbye naturally
+      if (/^(bye|see you|goodbye)\b/i.test(text)) {
+        setIsConversationalOpen(false);
+        handleByeNikki();
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Handle user requesting a break naturally
+      if (/\b(take a break|taking a break|need a break)\b/i.test(text)) {
+        setBreakPickerOpen(true);
+        setIsConversationalOpen(false);
+        setIsSubmitting(false);
+        return;
+      }
+
+      const userMsgId = `user_${Date.now()}`;
+      setBubbleConversation((prev) => [
+        ...prev,
+        { id: userMsgId, role: "user", content: text },
+      ]);
+
+      try {
+        const tz = getUserTimezone(profile?.timezone);
+        const res = await authFetch("/api/nikki/nudge/reply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            nudgeId: activeNudge?.id,
+            message: text,
+            timezone: tz,
+          }),
+        });
+
+        const env = await res.json();
+        if (env?.data?.reply) {
+          setBubbleConversation((prev) => [
+            ...prev,
+            { id: `nikki_${Date.now()}`, role: "nikki", content: env.data.reply },
+          ]);
+
+          // Talking animation reaction
+          setActiveSignal({ state: "talking", pose: "happy" });
+          setTimeout(() => setActiveSignal(null), 3000);
+
+          // If timetable was modified, emit event so timetable UI syncs
+          if (env.data.schedule || env.data.intent === "timetable_delete") {
+            window.dispatchEvent(new CustomEvent("companion:schedule-change"));
+          }
+        }
+      } catch {
+        setBubbleConversation((prev) => [
+          ...prev,
+          {
+            id: `err_${Date.now()}`,
+            role: "nikki",
+            content: "I'm right here with you! Let me know if you need anything else.",
+          },
+        ]);
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [inputText, isSubmitting, activeNudge?.id, profile?.timezone, handleByeNikki]
+  );
+
+  const handleDismissBubble = useCallback(async () => {
+    setIsConversationalOpen(false);
+    if (activeNudge?.id) {
+      authFetch("/api/nikki/nudge/dismiss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nudgeId: activeNudge.id }),
+      }).catch(() => {});
+      setActiveNudge(null);
+    }
+  }, [activeNudge?.id]);
+
+  const handleMuteForNow = useCallback(async () => {
+    setIsConversationalOpen(false);
+    if (activeNudge?.id) {
+      setActiveNudge(null);
+    }
+    try {
+      await authFetch("/api/nikki/nudge/mute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hours: 2 }),
+      });
+    } catch {}
+  }, [activeNudge?.id]);
 
   // Listen to companion state change events triggered by chat intent interactions (goodbye, return, sleep, break)
   useEffect(() => {

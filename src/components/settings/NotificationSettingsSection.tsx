@@ -389,6 +389,58 @@ export function NotificationSettingsSection() {
         </div>
       </div>
 
+      {/* Nikki Strictness & Tone Selector */}
+      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-ink-primary flex items-center gap-1.5">
+              <Heart className="h-4 w-4 text-pink-400" />
+              Nikki&apos;s Strictness &amp; Accountability
+            </p>
+            <p className="text-xs text-ink-muted mt-0.5">
+              Tune Nikki&apos;s tone: gentle reassurance, playful motivation, or direct accountability.
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+          {(["gentle", "playful", "firm"] as const).map((mode) => {
+            const isActive = (preferences.strictness || "playful") === mode;
+            const meta = {
+              gentle: {
+                title: "Gentle",
+                desc: "Soft, calming, low-pressure warmth and breathing room.",
+              },
+              playful: {
+                title: "Playful",
+                desc: "Cheerful, lightly teasing, curious and upbeat companion.",
+              },
+              firm: {
+                title: "Firm",
+                desc: "Direct, loving accountability focused on execution.",
+              },
+            }[mode];
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => updatePreferences({ strictness: mode })}
+                className={`flex flex-col items-start gap-1 p-3 rounded-xl border text-left transition-all ${
+                  isActive
+                    ? "border-amber-400/50 bg-amber-400/10 text-white shadow-sm"
+                    : "border-white/10 bg-white/[0.03] text-ink-muted hover:border-white/20 hover:text-white"
+                }`}
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span className="text-xs font-semibold">{meta.title}</span>
+                  {isActive && <CheckCircle2 className="h-3.5 w-3.5 text-amber-400" />}
+                </div>
+                <span className="text-[11px] text-ink-muted leading-tight">{meta.desc}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Quick Snooze / Pause Controls */}
       <div className="space-y-2">
         <h3 className="text-sm font-semibold text-ink-primary flex items-center gap-1.5">

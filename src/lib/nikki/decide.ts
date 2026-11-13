@@ -129,6 +129,11 @@ export function decideNikkiNudge(
       isSameDay(context.lastNudge.createdAt, context.localDate);
 
     if (!alreadySentToday) {
+      const firstTaskTitle =
+        context.scheduleItems[0]?.title ||
+        context.incompleteTasks[0]?.title ||
+        null;
+
       return {
         shouldSpeak: true,
         trigger: "morning_plan",
@@ -137,6 +142,7 @@ export function decideNikkiNudge(
         triggerContext: {
           wakeTime: context.usualWakeTime,
           hydrationCount: context.hydrationCountToday,
+          firstTaskTitle,
         },
       };
     }

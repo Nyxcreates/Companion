@@ -193,7 +193,10 @@ self.addEventListener("notificationclick", (event) => {
     return;
   }
 
-  const urlToOpen = event.notification.data?.url || "/plan?tab=schedule";
+  const nudgeId = event.notification.data?.nudgeId;
+  const urlToOpen = nudgeId
+    ? `/?openNikki=${nudgeId}`
+    : (event.notification.data?.url || "/plan?tab=schedule");
 
   event.waitUntil(
     self.clients
