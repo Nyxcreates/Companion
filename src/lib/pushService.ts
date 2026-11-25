@@ -70,39 +70,80 @@ export interface PushDeliveryResult {
 
 let vapidConfigured = false;
 
+function cleanEnvValue(raw: string | undefined): string {
+  if (!raw) return "";
+  return raw.trim().replace(/^['"]|['"]$/g, "").trim();
+}
+
+function normalizeVapidSubject(raw: string | undefined): string {
+  const cleaned = cleanEnvValue(raw);
+  if (!cleaned) return "mailto:companion@app.internal";
+  if (/^(mailto:|https?:\/\/)/i.test(cleaned)) return cleaned;
+  if (cleaned.includes("@")) return `mailto:${cleaned}`;
+  return cleaned;
+}
+
 export function getVapidPublicKey(): string {
-  const key = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY;
+  const key =
+    cleanEnvValue(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) ||
+    cleanEnvValue(process.env.VAPID_PUBLIC_KEY);
   if (!key) {
     console.warn(
       "[Companion pushService] NEXT_PUBLIC_VAPID_PUBLIC_KEY is not set. " +
       "Generate keys with: npx web-push generate-vapid-keys"
     );
   }
-  return key || "";
+  return key;
 }
 
-function ensureVapidConfigured(): boolean {
-  if (vapidConfigured) return true;
+function ensureVapidConfigured(): { ok: true } | { ok: false; reason: string } {
+  if (vapidConfigured) return { ok: true };
 
   const publicKey = getVapidPublicKey();
-  const privateKey = process.env.VAPID_PRIVATE_KEY;
-  const subject = process.env.VAPID_SUBJECT || "mailto:companion@app.internal";
+  const privateKey = cleanEnvValue(process.env.VAPID_PRIVATE_KEY);
+  const subject = normalizeVapidSubject(process.env.VAPID_SUBJECT);
 
-  if (publicKey && privateKey) {
-    try {
-      setVapidDetails(subject, publicKey, privateKey);
-      vapidConfigured = true;
-      return true;
-    } catch (err) {
-      console.error("[Companion pushService] Failed to set VAPID details:", err);
-      return false;
-    }
+  if (!publicKey && !privateKey) {
+    console.warn(
+      "[Companion pushService] VAPID keys not configured in environment (missing both public and private keys)."
+    );
+    return {
+      ok: false,
+      reason:
+        "VAPID_NOT_CONFIGURED: Missing NEXT_PUBLIC_VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY in server runtime. Redeploy after saving Vercel env vars.",
+    };
   }
 
-  console.warn(
-    "[Companion pushService] VAPID keys not configured in environment. Push notifications disabled."
-  );
-  return false;
+  if (!publicKey) {
+    console.warn("[Companion pushService] Missing NEXT_PUBLIC_VAPID_PUBLIC_KEY in server runtime.");
+    return {
+      ok: false,
+      reason:
+        "VAPID_NOT_CONFIGURED: Missing NEXT_PUBLIC_VAPID_PUBLIC_KEY in server runtime. Redeploy after saving Vercel env vars.",
+    };
+  }
+
+  if (!privateKey) {
+    console.warn("[Companion pushService] Missing VAPID_PRIVATE_KEY in server runtime.");
+    return {
+      ok: false,
+      reason:
+        "VAPID_NOT_CONFIGURED: Missing VAPID_PRIVATE_KEY in server runtime. Redeploy after saving Vercel env vars.",
+    };
+  }
+
+  try {
+    setVapidDetails(subject, publicKey, privateKey);
+    vapidConfigured = true;
+    return { ok: true };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : "Invalid VAPID configuration";
+    console.error("[Companion pushService] Failed to set VAPID details:", errMsg);
+    return {
+      ok: false,
+      reason: `VAPID_NOT_CONFIGURED: ${errMsg}`,
+    };
+  }
 }
 
 /**
@@ -113,10 +154,11 @@ export async function sendPushToUser(
   firebaseUid: string,
   options: SendPushOptions
 ): Promise<PushDeliveryResult> {
-  if (!ensureVapidConfigured()) {
+  const vapidCheck = ensureVapidConfigured();
+  if (!vapidCheck.ok) {
     return {
       success: false,
-      reason: "VAPID_NOT_CONFIGURED",
+      reason: vapidCheck.reason,
       sentCount: 0,
       removedCount: 0,
     };
