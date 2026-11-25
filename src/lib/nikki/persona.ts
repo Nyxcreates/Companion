@@ -1,6 +1,3 @@
-import { connectToDatabase } from "@/lib/mongodb";
-import { NikkiNudgeModel } from "@/models/NikkiNudge";
-import { saveSchedule } from "@/services/scheduleService";
 import type { ScheduleItem, ScheduleSummary } from "@/types/schedule";
 import type { NikkiStrictness } from "@/types/notification";
 import type { NikkiContextSnapshot } from "./context";
@@ -237,6 +234,7 @@ export async function saveProposedTimetable(
   dateStr: string,
   items: ScheduleItem[]
 ): Promise<ScheduleSummary> {
+  const { saveSchedule } = await import("@/services/scheduleService");
   return saveSchedule(firebaseUid, dateStr, items);
 }
 
@@ -247,6 +245,8 @@ export async function getRecentNudgeMessages(
   days: number = 7
 ): Promise<Set<string>> {
   try {
+    const { connectToDatabase } = await import("@/lib/mongodb");
+    const { NikkiNudgeModel } = await import("@/models/NikkiNudge");
     await connectToDatabase();
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const nudges = await NikkiNudgeModel.find({
@@ -408,15 +408,17 @@ export const SCENARIO_TEMPLATES: Record<
   // Scenario: Deadline approaching
   deadline_approaching: {
     gentle: [
+      `Your assignment deadline for '{taskTitle}' is approaching. Shall we work on it together?`,
       `Hey {name}, gentle heads up: '{taskTitle}' has a deadline coming up in about {hours} hours. Are you in a good spot with it, or would you like to break it down?`,
       `Hi {name}, thinking of '{taskTitle}' which is due in ~{hours}h. How is it flowing, and can I help make it lighter?`,
     ],
     playful: [
+      `Your assignment deadline for '{taskTitle}' is approaching, {name}! Shall we work on it together? ⏱️`,
       `Radar ping, {name}! '{taskTitle}' has a deadline in ~{hours} hours! Are we ready to cross the finish line, or do we need a sprint?`,
       `Clock check, {name}! '{taskTitle}' is due in about {hours} hours. How's the momentum looking?`,
     ],
     firm: [
-      `Deadline alert, {name}: '{taskTitle}' is due in ~{hours} hours. Are you actively on it, or do we need to triage right now?`,
+      `Deadline alert, {name}: '{taskTitle}' is due in ~{hours} hours. Shall we work on it together and knock it out?`,
       `Attention on '{taskTitle}', {name}: {hours} hours until the deadline. Let's make sure this gets closed out on time.`,
     ],
   },
@@ -456,19 +458,21 @@ export const SCENARIO_TEMPLATES: Record<
   // Scenario: Caring Frustration (When user repeatedly avoids an important priority)
   caring_frustration: {
     gentle: [
+      `You postponed '{taskTitle}' again 😭 Come on, let's make it easier to start! What can we do to break it down?`,
       `Hey {name}, I noticed we've moved '{taskTitle}' {avoidCount} times now. I care about you too much to pretend this isn't weighing on you. What's the real blocker here?`,
       `Hi {name}, gentle honesty from your friend: '{taskTitle}' has been postponed {avoidCount} times. Leaving it hanging is draining your peace. What's making this hard right now?`,
       `Hey {name}, loving check-in: this is the {avoidCount}th time we've sidestepped '{taskTitle}'. You deserve to be free of this weight. What can we do to break it down?`,
     ],
     playful: [
+      `You postponed '{taskTitle}' again 😭 Come on, let's make it easier to start!`,
       `Okay {name}, timeout! We've dodged '{taskTitle}' {avoidCount} times now! I love you, but I'm officially giving you the side-eye. What's making this task your nemesis?`,
       `Wait a minute, {name}! That's {avoidCount} times we've pushed '{taskTitle}'! Are you playing hide and seek with your own goals? Tell me what's stuck!`,
       `Hold up, {name}! '{taskTitle}' has been postponed {avoidCount} times! I'm putting on my caring friend detective hat — what is really getting in the way?`,
     ],
     firm: [
+      `You postponed '{taskTitle}' again 😭 Come on, let's make it easier to start right now.`,
       `{name}, direct reality check. We've pushed '{taskTitle}' {avoidCount} times. Avoidance doesn't make it disappear — it just drains your mental energy. Let's tackle 10 minutes right now or kill it off the list.`,
       `Accountability check, {name}: '{taskTitle}' has been avoided {avoidCount} times. We either commit to executing it today, or we make an intentional choice to drop it. Which is it?`,
-      `{name}, I care too much about your progress to watch you ghost '{taskTitle}' {avoidCount} times. What is the single friction point, and how do we remove it right now?`,
     ],
   },
 
@@ -509,14 +513,19 @@ export const SCENARIO_TEMPLATES: Record<
 
   goal_neglected: {
     gentle: [
+      `You haven't touched your project '{goalTitle}' in a few days. Everything okay?`,
+      `Didn't we make '{goalTitle}' one of your priorities? Let's check in on where things are!`,
       `Hey {name}, your goal '{goalTitle}' hasn't seen updates for {days} days. What's been getting in the way or blocking it lately?`,
       `Hi {name}, just gently holding space for your goal '{goalTitle}'. It's been untouched for {days} days — what feels like the biggest blocker right now?`,
     ],
     playful: [
+      `You haven't touched your project '{goalTitle}' in a few days! Everything okay, {name}?`,
+      `Didn't we make '{goalTitle}' one of your priorities, {name}? Tell me what's holding us back!`,
       `Hey {name}! Your goal '{goalTitle}' misses you — it's been {days} days! What's been getting in the way or blocking it lately?`,
       `Poking your goal '{goalTitle}' with a stick, {name}! Untouched for {days} days — what's been blocking the magic lately?`,
     ],
     firm: [
+      `Didn't we make '{goalTitle}' one of your priorities, {name}? It hasn't moved in {days} days. What's stopping us?`,
       `Hey {name}, your goal '{goalTitle}' has been untouched for {days} days. What's specifically blocking it right now?`,
       `Accountability check, {name}: '{goalTitle}' hasn't moved in {days} days. What is the blocker in your way?`,
     ],
@@ -667,16 +676,19 @@ export const SCENARIO_TEMPLATES: Record<
   // Scenario: Task celebration — user crushed 3+ tasks today
   task_celebration: {
     gentle: [
+      `WAITTT! You actually completed it! I'm proud of you, {name}! 🌸`,
       `Hey {name}! You completed {completedCount} tasks today — that's genuinely lovely progress. I hope you're proud of yourself! 🌸`,
       `{name}, you've checked off {completedCount} things today! That's real, meaningful effort. How are you feeling about the rest of the day?`,
       `You did it, {name}! {completedCount} tasks crossed off today. I see all the work you put in — it matters! What would feel nice to do next?`,
     ],
     playful: [
+      `WAITTT! You actually completed it! I'm proud of you, {name}! 🎉`,
       `{name}! {completedCount} tasks DONE today?! You absolute legend! 🎉 That's genuinely good progress — how does it feel?`,
       `Okay wait, hold on — {name} completed {completedCount} tasks today?! That's amazing momentum! What's powering you today? ⚡`,
       `You completed {completedCount} tasks today, {name}! That's not nothing — that's actually really good. High five! 🙌 What's next?`,
     ],
     firm: [
+      `WAITTT! You actually completed it! I'm proud of you, {name}. Solid execution.`,
       `Solid execution today, {name}: {completedCount} tasks completed. That's real momentum. How are you feeling about what's left?`,
       `{completedCount} tasks done, {name}. Good work. What's the remaining priority you want to close out before end of day?`,
       `You cleared {completedCount} tasks today, {name}. Keep that energy — what's the one thing you want to finish next?`,
@@ -954,6 +966,8 @@ export function getPersonaFallbackMessage(
   else if (trigger === "timetable_unstarted") scenarioKey = "timetable_unstarted";
   else if (trigger === "mood_followup") scenarioKey = "mood_followup";
   else if (trigger === "task_overdue") scenarioKey = "task_overdue";
+  else if (trigger === "task_celebration") scenarioKey = "task_celebration";
+  else if (trigger === "overload_warning") scenarioKey = "overload_warning";
 
   const templatesByStrictness = SCENARIO_TEMPLATES[scenarioKey] || SCENARIO_TEMPLATES.long_silence;
   const templates = templatesByStrictness[strictness] || templatesByStrictness.playful;
@@ -981,7 +995,9 @@ export function getPersonaFallbackMessage(
   const hours = String(ctx.hoursUntilDue || ctx.hoursAway || 3);
   const itemTitle = (ctx.itemTitle as string) || "your scheduled item";
   const completedTasks = String(ctx.completedTasksCount || context.completedTasksCountToday || 0);
+  const completedCount = String(ctx.completedCount || ctx.completedTasksCount || context.completedTasksCountToday || 0);
   const completedActivities = String(ctx.completedActivitiesCount || context.completedActivitiesCountToday || 0);
+  const totalPendingCount = String(ctx.totalPendingCount || context.totalPendingTasksCount || 0);
 
   const replacements: Record<string, string> = {
     name: userName,
@@ -995,7 +1011,9 @@ export function getPersonaFallbackMessage(
     hours,
     itemTitle,
     completedTasks,
+    completedCount,
     completedActivities,
+    totalPendingCount,
   };
 
   return selectVariedMessage(templates, recentMessages, replacements);

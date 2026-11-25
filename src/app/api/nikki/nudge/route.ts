@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     const trigger = nudge.trigger;
     const meta = (nudge.metadata || {}) as Record<string, unknown>;
     let pose = "happy";
-    if (trigger === "focus_finished") pose = "celebrate";
+    if (trigger === "focus_finished" || trigger === "task_celebration") pose = "celebrate";
     else if (trigger === "late_night" || trigger === "unusually_late") pose = "sleepy";
     else if (trigger === "task_overdue" || trigger === "activity_missed" || meta.isCaringFrustration) pose = "concerned";
     else if (trigger === "goal_neglected" && meta.isCaringFrustration) pose = "think";

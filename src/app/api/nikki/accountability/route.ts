@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUser, ApiAuthError } from "@/lib/api/requireUser";
 import { connectToDatabase } from "@/lib/mongodb";
-import { getTask, updateTask, createTask } from "@/services/taskService";
-import { getGoal, updateGoal } from "@/services/goalService";
+import { executeAccountabilityAction } from "@/lib/nikki/accountabilitySupport";
 
 export const runtime = "nodejs";
 
-type AccountabilityAction = "break_task" | "reschedule_task" | "adjust_goal" | "focus_now" | "ask_blocker";
+export type AccountabilityAction =
+  | "break_task"
+  | "reschedule_task"
+  | "adjust_goal"
+  | "complete_task"
+  | "complete_goal"
+  | "change_priority"
+  | "focus_now"
+  | "ask_blocker"
+  | "rest_support";
 
 /**
  * POST /api/nikki/accountability
@@ -14,9 +22,13 @@ type AccountabilityAction = "break_task" | "reschedule_task" | "adjust_goal" | "
  * Executes a goal/task accountability action Nikki proposes in conversation:
  *   - break_task:     Creates up to 5 sub-tasks linked to the parent task's goal
  *   - reschedule_task: Updates the task's dueDate
- *   - adjust_goal:    Updates the goal's deadline
+ *   - adjust_goal:    Updates the goal's deadline or target
+ *   - complete_task:  Marks a task as completed with completedAt
+ *   - complete_goal:  Marks a goal as completed with completedAt
+ *   - change_priority: Updates task/goal priority
  *   - focus_now:      No-op (handled client-side — opens focus mode)
  *   - ask_blocker:    No-op (handled client-side — opens chat)
+ *   - rest_support:   Validates rest without guilt and optionally adjusts task
  */
 export async function POST(request: NextRequest) {
   try {
@@ -24,77 +36,57 @@ export async function POST(request: NextRequest) {
     await connectToDatabase();
 
     const body = await request.json().catch(() => ({}));
-    const action = typeof body.action === "string" ? body.action as AccountabilityAction : null;
+    const action = typeof body.action === "string" ? (body.action as AccountabilityAction) : null;
     const targetId = typeof body.targetId === "string" ? body.targetId.trim() : null;
-    const targetType = typeof body.targetType === "string" ? body.targetType : null;
+    const targetType = body.targetType === "goal" ? "goal" : "task";
     const payload = body.payload || {};
 
-    if (!action || !["break_task", "reschedule_task", "adjust_goal", "focus_now", "ask_blocker"].includes(action)) {
+    const validActions: AccountabilityAction[] = [
+      "break_task",
+      "reschedule_task",
+      "adjust_goal",
+      "complete_task",
+      "complete_goal",
+      "change_priority",
+      "focus_now",
+      "ask_blocker",
+      "rest_support",
+    ];
+
+    if (!action || !validActions.includes(action)) {
       return NextResponse.json({ error: { message: "Invalid action.", code: "VALIDATION_ERROR" } }, { status: 400 });
     }
 
-    if (!targetId) {
+    if (!targetId && action !== "focus_now" && action !== "ask_blocker" && action !== "rest_support") {
       return NextResponse.json({ error: { message: "targetId is required.", code: "VALIDATION_ERROR" } }, { status: 400 });
     }
 
-    // No-op client-handled actions
+    // Client-side no-ops
     if (action === "focus_now" || action === "ask_blocker") {
       return NextResponse.json({ data: { ok: true, action } });
     }
 
-    if (action === "reschedule_task") {
-      if (!payload.dueDate || typeof payload.dueDate !== "string") {
-        return NextResponse.json({ error: { message: "payload.dueDate is required for reschedule_task.", code: "VALIDATION_ERROR" } }, { status: 400 });
-      }
-      const updated = await updateTask(targetId, user.uid, { dueDate: payload.dueDate });
-      if (!updated) {
-        return NextResponse.json({ error: { message: "Task not found.", code: "TASK_NOT_FOUND" } }, { status: 404 });
-      }
-      return NextResponse.json({ data: { ok: true, action, task: updated } });
+    // Rest support without targetId
+    if (action === "rest_support" && !targetId) {
+      return NextResponse.json({ data: { ok: true, action, message: "Rest acknowledged without guilt." } });
     }
 
-    if (action === "adjust_goal") {
-      if (!payload.newDeadline || typeof payload.newDeadline !== "string") {
-        return NextResponse.json({ error: { message: "payload.newDeadline is required for adjust_goal.", code: "VALIDATION_ERROR" } }, { status: 400 });
-      }
-      const updated = await updateGoal(targetId, user.uid, { deadline: payload.newDeadline });
-      if (!updated) {
-        return NextResponse.json({ error: { message: "Goal not found.", code: "GOAL_NOT_FOUND" } }, { status: 404 });
-      }
-      return NextResponse.json({ data: { ok: true, action, goal: updated } });
+    const result = await executeAccountabilityAction({
+      action,
+      firebaseUid: user.uid,
+      targetId: targetId || "",
+      targetType,
+      payload,
+    });
+
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: { message: result.error || "Action failed.", code: "ACTION_FAILED" } },
+        { status: 400 }
+      );
     }
 
-    if (action === "break_task") {
-      const steps: string[] = Array.isArray(payload.steps)
-        ? payload.steps.filter((s: unknown) => typeof s === "string" && s.trim().length > 0).slice(0, 5)
-        : [];
-
-      if (steps.length === 0) {
-        return NextResponse.json({ error: { message: "payload.steps must be a non-empty array of strings (max 5).", code: "VALIDATION_ERROR" } }, { status: 400 });
-      }
-
-      // Fetch parent task to inherit its goalId
-      const parentTask = await getTask(targetId, user.uid);
-      if (!parentTask) {
-        return NextResponse.json({ error: { message: "Task not found.", code: "TASK_NOT_FOUND" } }, { status: 404 });
-      }
-
-      const createdTasks = [];
-      for (const stepTitle of steps) {
-        const subTask = await createTask({
-          firebaseUid: user.uid,
-          title: stepTitle.trim(),
-          description: `Sub-task of: ${parentTask.title}`,
-          dueDate: parentTask.dueDate ?? null,
-          goalId: parentTask.goalId ?? null,
-        });
-        createdTasks.push(subTask);
-      }
-
-      return NextResponse.json({ data: { ok: true, action, createdTasks, parentTaskId: targetId } });
-    }
-
-    return NextResponse.json({ error: { message: "Unhandled action.", code: "INTERNAL_ERROR" } }, { status: 500 });
+    return NextResponse.json({ data: result });
   } catch (error) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: { message: error.message, code: error.code } }, { status: error.status });

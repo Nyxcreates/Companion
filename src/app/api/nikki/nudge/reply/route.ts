@@ -13,6 +13,11 @@ import {
   getOverdueTaskReaction,
 } from "@/lib/nikki/persona";
 import {
+  parseAccountabilityIntent,
+  executeAccountabilityAction,
+  generateDefaultSubSteps,
+} from "@/lib/nikki/accountabilitySupport";
+import {
   getOrCreateActiveConversation,
   saveMessage,
   loadRecentHistory,
@@ -117,6 +122,103 @@ export async function POST(request: NextRequest) {
           conversationId,
           intent: "conversation",
           pose: "concerned",
+        },
+      });
+    }
+
+    // ── NIKKI PART 4D: Interactive Goal & Task Accountability Support ────────
+    const targetId =
+      (nudgeDoc?.metadata?.targetId as string) ||
+      (nudgeDoc?.metadata?.taskId as string) ||
+      (nudgeDoc?.metadata?.goalId as string) ||
+      undefined;
+
+    const targetTitle =
+      (nudgeDoc?.metadata?.targetTitle as string) ||
+      (nudgeDoc?.metadata?.taskTitle as string) ||
+      (nudgeDoc?.metadata?.goalTitle as string) ||
+      (nudgeDoc?.metadata?.itemTitle as string) ||
+      undefined;
+
+    const targetType: "task" | "goal" =
+      (nudgeDoc?.metadata?.targetType as "task" | "goal") ||
+      (nudgeDoc?.trigger === "goal_neglected" ? "goal" : "task");
+
+    const accountabilityAnalysis = parseAccountabilityIntent(message, {
+      targetId,
+      targetTitle,
+      targetType,
+      userName,
+      strictness,
+    });
+
+    if (accountabilityAnalysis.intent !== "general") {
+      let actionExecuted = false;
+
+      // Handle database execution if confirmed or explicitly instructed
+      if (accountabilityAnalysis.shouldModifyDatabase && targetId) {
+        try {
+          if (accountabilityAnalysis.intent === "confirm_action") {
+            const pendingSteps =
+              (nudgeDoc?.metadata?.proposedSteps as string[]) ||
+              generateDefaultSubSteps(targetTitle || "Task");
+
+            await executeAccountabilityAction({
+              action: "break_task",
+              firebaseUid: user.uid,
+              targetId,
+              targetType,
+              payload: { steps: pendingSteps, title: targetTitle },
+            });
+            actionExecuted = true;
+          } else if (accountabilityAnalysis.actionToExecute) {
+            await executeAccountabilityAction({
+              action: accountabilityAnalysis.actionToExecute,
+              firebaseUid: user.uid,
+              targetId,
+              targetType,
+              payload: {
+                dueDate: accountabilityAnalysis.newDueDate,
+                newDeadline: accountabilityAnalysis.newDueDate,
+                priority: accountabilityAnalysis.newPriority,
+                title: targetTitle,
+              },
+            });
+            actionExecuted = true;
+          }
+        } catch (actErr) {
+          console.warn("[Companion Accountability Action] Execution error:", actErr);
+        }
+      }
+
+      const replyContent =
+        accountabilityAnalysis.replyMessage ||
+        `I'm right here with you! Let's take '${targetTitle || "this"}' one step at a time.`;
+
+      await saveMessage({
+        conversationId,
+        firebaseUid: user.uid,
+        role: "assistant",
+        content: replyContent,
+      });
+
+      if (nudgeDoc) {
+        nudgeDoc.status = "replied";
+        nudgeDoc.metadata = {
+          ...(nudgeDoc.metadata || {}),
+          conversationId,
+          proposedSteps: accountabilityAnalysis.proposedSteps || nudgeDoc.metadata?.proposedSteps,
+        };
+        await nudgeDoc.save().catch(() => {});
+      }
+
+      return NextResponse.json({
+        data: {
+          reply: replyContent,
+          conversationId,
+          intent: accountabilityAnalysis.intent,
+          pose: accountabilityAnalysis.pose,
+          goalTaskChanged: actionExecuted,
         },
       });
     }

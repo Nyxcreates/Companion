@@ -784,25 +784,25 @@ export function NikkiProactivePresence() {
       return ["Taking a break", "Finishing one thing"];
     }
     if (trigger === "task_overdue") {
-      return ["Starting a tiny piece", "Move deadline"];
+      return ["Starting right now 💪", "Break it into smaller steps", "Reschedule to tomorrow", "I actually completed it!"];
     }
     if (trigger === "long_silence") {
       return ["Doing well!", "Missed you!"];
     }
     if (trigger === "goal_neglected") {
-      return ["Let's work on it now", "Break it into steps", "What's blocking me?"];
+      return ["Let's work on it now", "Break it into smaller steps", "I have too much college work", "Reschedule to tomorrow"];
     }
     if (trigger === "task_celebration") {
-      return ["That felt great! 🎉", "What's next?", "Need a short break first"];
+      return ["That felt great! 🎉", "What's next?", "Taking a rest 🌸"];
     }
     if (trigger === "task_unfinished") {
-      return ["Starting right now 💪", "Break it into smaller steps", "I'm blocked on this"];
+      return ["Starting right now 💪", "Break it into smaller steps", "I'm too tired today", "I completed it!"];
     }
     if (trigger === "overload_warning") {
-      return ["Help me prioritize", "Pick top 3 for me", "I'll figure it out"];
+      return ["Help me prioritize", "Pick top 3 for me", "I have too much college work"];
     }
     if (trigger === "deadline_approaching") {
-      return ["Starting now!", "Need to reschedule", "Break it down for me"];
+      return ["Starting now!", "Break it into smaller steps", "Reschedule to tomorrow"];
     }
     return ["I'm doing good", "Help me plan", `Bye ${companionName}`];
   }, [activeNudge?.trigger, companionName]);

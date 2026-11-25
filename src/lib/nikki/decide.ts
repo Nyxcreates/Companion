@@ -132,10 +132,19 @@ export function decideNikkiNudge(
   }
 
   // 2. TRIGGER: deadline_approaching
-  // A task deadline is approaching within the next 4 hours
-  if (context.approachingDeadlineTasks.length > 0) {
-    const urgentTask = context.approachingDeadlineTasks[0];
-    const idempotencyKey = `${context.firebaseUid}:deadline_approaching:${urgentTask.id}:${context.localDate}`;
+  // A task deadline is approaching within the next 4 hours (or detected by Part 4B)
+  const approachingTask =
+    context.approachingDeadlineTasks[0] ||
+    (context.goalTaskDetections?.tasksApproachingDeadline?.[0]
+      ? {
+          id: context.goalTaskDetections.tasksApproachingDeadline[0].targetId || "task",
+          title: context.goalTaskDetections.tasksApproachingDeadline[0].targetTitle || "your task",
+          hoursUntilDue: Number(context.goalTaskDetections.tasksApproachingDeadline[0].details?.hoursUntilDue ?? 4),
+        }
+      : null);
+
+  if (approachingTask) {
+    const idempotencyKey = `${context.firebaseUid}:deadline_approaching:${approachingTask.id}:${context.localDate}`;
 
     const alreadySentToday = context.lastNudge?.idempotencyKey === idempotencyKey;
     if (!alreadySentToday) {
@@ -144,11 +153,11 @@ export function decideNikkiNudge(
         trigger: "deadline_approaching",
         priorityScore: 95,
         idempotencyKey,
-        reason: `Task '${urgentTask.title}' has an approaching deadline in ~${urgentTask.hoursUntilDue}h.`,
+        reason: `Task '${approachingTask.title}' has an approaching deadline in ~${approachingTask.hoursUntilDue}h.`,
         triggerContext: {
-          taskId: urgentTask.id,
-          taskTitle: urgentTask.title,
-          hoursUntilDue: urgentTask.hoursUntilDue,
+          taskId: approachingTask.id,
+          taskTitle: approachingTask.title,
+          hoursUntilDue: approachingTask.hoursUntilDue,
         },
       };
     }
@@ -203,6 +212,16 @@ export function decideNikkiNudge(
         },
       };
     }
+  }
+
+  // ── Guard 7: Do not interrupt active conversations unnecessarily ─────────────
+  // Urgent Priority 1 events above can still surface, but routine & accountability
+  // nudges wait until the user hasn't sent a chat message for at least 10 minutes.
+  if (context.minutesSinceLastUserMessage !== null && context.minutesSinceLastUserMessage < 10) {
+    return {
+      shouldSpeak: false,
+      reason: `Active conversation in progress (${context.minutesSinceLastUserMessage}m since last user message); deferring non-urgent nudge.`,
+    };
   }
 
   // ═════════════════════════════════════════════════════════════════════════════
@@ -407,14 +426,19 @@ export function decideNikkiNudge(
   }
 
   // 11b. TRIGGER: task_celebration
-  // User completed 3+ tasks today — celebrate their momentum (afternoon window)
+  // User completed 3+ tasks today or has a goal making strong progress (afternoon window)
+  const goodProgressGoal = context.goalsMakingGoodProgress?.[0];
   if (
-    context.completedTasksCountToday >= 3 &&
+    (context.completedTasksCountToday >= 3 || Boolean(goodProgressGoal)) &&
     context.currentHour >= 13 &&
     context.currentHour <= 19
   ) {
-    const idempotencyKey = `${context.firebaseUid}:task_celebration:${context.localDate}`;
-    const alreadySentToday = context.lastNudge?.trigger === "task_celebration" &&
+    const idempotencyKey =
+      context.completedTasksCountToday >= 3
+        ? `${context.firebaseUid}:task_celebration:${context.localDate}`
+        : `${context.firebaseUid}:task_celebration:goal:${goodProgressGoal?.id}:${context.localDate}`;
+    const alreadySentToday =
+      context.lastNudge?.trigger === "task_celebration" &&
       isSameDay(context.lastNudge.createdAt, context.localDate);
 
     if (!alreadySentToday) {
@@ -423,19 +447,37 @@ export function decideNikkiNudge(
         trigger: "task_celebration",
         priorityScore: 58,
         idempotencyKey,
-        reason: `User completed ${context.completedTasksCountToday} tasks today — genuine momentum worth celebrating.`,
+        reason:
+          context.completedTasksCountToday >= 3
+            ? `User completed ${context.completedTasksCountToday} tasks today — genuine momentum worth celebrating.`
+            : `Goal '${goodProgressGoal?.title}' is making strong progress (${goodProgressGoal?.progressPercent ?? "great"}%) — celebrate momentum.`,
         triggerContext: {
           completedCount: context.completedTasksCountToday,
+          goalId: goodProgressGoal?.id,
+          goalTitle: goodProgressGoal?.title,
+          progressPercent: goodProgressGoal?.progressPercent,
         },
       };
     }
   }
 
   // 12. TRIGGER: goal_neglected / stale goal — high-priority first
-  // High-priority neglected goals fire before medium/low-priority ones
-  if (context.neglectedGoals.length > 0) {
+  // High-priority neglected goals fire before medium/low-priority ones (also reads Part 4B detections)
+  const detectedNeglectedGoals =
+    context.neglectedGoals.length > 0
+      ? context.neglectedGoals
+      : (context.goalTaskDetections?.importantGoalsNoProgress || []).map((d) => ({
+          id: d.targetId || "goal",
+          title: d.targetTitle || "your goal",
+          priority: String(d.details?.priority || "HIGH"),
+          daysSinceUpdated: Number(d.details?.daysSinceUpdated ?? 3),
+          avoidCount: Number(d.details?.avoidCount ?? 0),
+          progressPercent: (d.details?.progressPercent as number | null) ?? null,
+        }));
+
+  if (detectedNeglectedGoals.length > 0) {
     // Sort: HIGH priority first, then by days since updated (most neglected first)
-    const sortedNeglected = [...context.neglectedGoals].sort((a, b) => {
+    const sortedNeglected = [...detectedNeglectedGoals].sort((a, b) => {
       const priorityOrder: Record<string, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
       const pa = priorityOrder[(a as { priority?: string }).priority ?? "MEDIUM"] ?? 1;
       const pb = priorityOrder[(b as { priority?: string }).priority ?? "MEDIUM"] ?? 1;
@@ -470,16 +512,28 @@ export function decideNikkiNudge(
     }
   }
 
-  // 13. TRIGGER: task_overdue
-  if (context.overdueTasks.length > 0 || context.staleTasks.length > 0) {
-    const task = context.overdueTasks[0] || context.staleTasks[0];
+  // 13. TRIGGER: task_overdue (also catches repeatedly postponed tasks from Part 4A/4B)
+  const postponedFallback =
+    context.repeatedlyPostponedTasks?.[0] ||
+    (context.goalTaskDetections?.tasksRepeatedlyPostponed?.[0]
+      ? {
+          id: context.goalTaskDetections.tasksRepeatedlyPostponed[0].targetId || "task",
+          title: context.goalTaskDetections.tasksRepeatedlyPostponed[0].targetTitle || "your task",
+          daysOverdue: 0,
+          daysSinceUpdated: 0,
+          avoidCount: Number(context.goalTaskDetections.tasksRepeatedlyPostponed[0].details?.postponeCount ?? 2),
+        }
+      : null);
+
+  if (context.overdueTasks.length > 0 || context.staleTasks.length > 0 || postponedFallback) {
+    const task = context.overdueTasks[0] || context.staleTasks[0] || postponedFallback!;
     const isOverdue = Boolean(context.overdueTasks[0]);
     const idempotencyKey = `${context.firebaseUid}:task_overdue:${task.id}:${context.localDate}`;
     const alreadySentToday = context.lastNudge?.trigger === "task_overdue" &&
       isSameDay(context.lastNudge.createdAt, context.localDate);
 
     if (!alreadySentToday) {
-      const isCaringFrustration = task.avoidCount >= 2;
+      const isCaringFrustration = task.avoidCount >= 2 || Boolean(postponedFallback && !isOverdue && !context.staleTasks[0]);
       return {
         shouldSpeak: true,
         trigger: "task_overdue",
@@ -487,6 +541,8 @@ export function decideNikkiNudge(
         idempotencyKey,
         reason: isOverdue
           ? `Task '${task.title}' is overdue (${task.daysOverdue}d overdue).`
+          : isCaringFrustration
+          ? `Task '${task.title}' has been repeatedly postponed (${task.avoidCount} times).`
           : `Task '${task.title}' untouched for ${task.daysSinceUpdated} days.`,
         triggerContext: {
           targetId: task.id,

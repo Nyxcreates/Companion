@@ -451,3 +451,4 @@ export function filterDetectionsByCooldown(
     return elapsedHours >= detection.cooldownHours;
   });
 }
+
