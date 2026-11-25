@@ -21,6 +21,10 @@ export interface NotificationPreferenceDocument extends Document {
   categoriesEnabled: Record<NotificationCategory, boolean>;
   quietHoursStart: string | null; // e.g. "22:00"
   quietHoursEnd: string | null; // e.g. "07:00"
+  morningCheckInEnabled: boolean;
+  morningCheckInTime: string; // e.g. "08:00"
+  eveningCheckInEnabled: boolean;
+  eveningCheckInTime: string; // e.g. "20:00"
   checkInFrequency: CheckInFrequency;
   floatingPresence: FloatingPresenceMode;
   breakIntervalMinutes: number;
@@ -53,6 +57,10 @@ const NotificationPreferenceSchema = new Schema<NotificationPreferenceDocument>(
     },
     quietHoursStart: { type: String, default: "22:30" },
     quietHoursEnd: { type: String, default: "07:00" },
+    morningCheckInEnabled: { type: Boolean, default: true },
+    morningCheckInTime: { type: String, default: "08:00" },
+    eveningCheckInEnabled: { type: Boolean, default: true },
+    eveningCheckInTime: { type: String, default: "20:00" },
     checkInFrequency: {
       type: String,
       enum: ["gentle", "balanced", "frequent"],

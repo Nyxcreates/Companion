@@ -24,8 +24,20 @@ export async function createNotification(data: {
   actionUrl?: string;
   actionLabel?: string;
   metadata?: Record<string, unknown>;
+  /** IANA timezone of the user — forwarded to sendPushToUser for quiet-hours enforcement */
+  userTimezone?: string;
+  /** Set true for test notifications that should bypass quiet hours */
+  bypassQuietHours?: boolean;
 }): Promise<NotificationDocument> {
-  const notif = await NotificationModel.create(data);
+  const notif = await NotificationModel.create({
+    firebaseUid: data.firebaseUid,
+    category: data.category,
+    title: data.title,
+    body: data.body,
+    actionUrl: data.actionUrl,
+    actionLabel: data.actionLabel,
+    metadata: data.metadata,
+  });
 
   // Proactively deliver via Web Push in background
   sendPushToUser(data.firebaseUid, {
@@ -34,6 +46,8 @@ export async function createNotification(data: {
     url: data.actionUrl || "/dashboard",
     category: data.category,
     tag: `companion-${data.category}`,
+    userTimezone: data.userTimezone,
+    bypassQuietHours: data.bypassQuietHours,
   }).catch((err) => {
     console.warn("[Companion Notification] Background push dispatch error:", err);
   });
@@ -75,6 +89,10 @@ function docToPreferences(doc: NotificationPreferenceDocument): NotificationPref
     categoriesEnabled: catMap as Record<NotificationCategory, boolean>,
     quietHoursStart: doc.quietHoursStart ?? "22:30",
     quietHoursEnd: doc.quietHoursEnd ?? "07:00",
+    morningCheckInEnabled: doc.morningCheckInEnabled ?? true,
+    morningCheckInTime: doc.morningCheckInTime ?? "08:00",
+    eveningCheckInEnabled: doc.eveningCheckInEnabled ?? true,
+    eveningCheckInTime: doc.eveningCheckInTime ?? "20:00",
     checkInFrequency: (doc.checkInFrequency as CheckInFrequency) ?? "balanced",
     floatingPresence: (doc.floatingPresence as FloatingPresenceMode) ?? "always",
     breakIntervalMinutes: doc.breakIntervalMinutes ?? 45,
@@ -116,6 +134,10 @@ export async function updatePreferences(
   if (updates.proactiveEnabled !== undefined) doc.proactiveEnabled = updates.proactiveEnabled;
   if (updates.quietHoursStart !== undefined) doc.quietHoursStart = updates.quietHoursStart;
   if (updates.quietHoursEnd !== undefined) doc.quietHoursEnd = updates.quietHoursEnd;
+  if (updates.morningCheckInEnabled !== undefined) doc.morningCheckInEnabled = updates.morningCheckInEnabled;
+  if (updates.morningCheckInTime !== undefined) doc.morningCheckInTime = updates.morningCheckInTime;
+  if (updates.eveningCheckInEnabled !== undefined) doc.eveningCheckInEnabled = updates.eveningCheckInEnabled;
+  if (updates.eveningCheckInTime !== undefined) doc.eveningCheckInTime = updates.eveningCheckInTime;
   if (updates.checkInFrequency !== undefined) doc.checkInFrequency = updates.checkInFrequency;
   if (updates.floatingPresence !== undefined) doc.floatingPresence = updates.floatingPresence;
   if (updates.breakIntervalMinutes !== undefined) doc.breakIntervalMinutes = updates.breakIntervalMinutes;

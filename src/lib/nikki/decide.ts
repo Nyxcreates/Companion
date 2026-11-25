@@ -279,8 +279,16 @@ export function decideNikkiNudge(
   }
 
   // 6. TRIGGER: morning_checkin / morning_plan
-  // Fires in the morning between wake time and 10:30
-  if (context.totalMinutes >= wakeTotalMins && context.totalMinutes <= 10 * 60 + 30) {
+  // Fires in the morning starting at user's preferred morningCheckInTime (default 08:00) through +2.5h
+  const [mH, mM] = (context.morningCheckInTime || "08:00").split(":").map(Number);
+  const morningStartMins = (Number.isFinite(mH) ? mH : 8) * 60 + (Number.isFinite(mM) ? mM : 0);
+  const morningEndMins = Math.max(morningStartMins + 150, 10 * 60 + 30);
+
+  if (
+    context.morningCheckInEnabled !== false &&
+    context.totalMinutes >= Math.max(wakeTotalMins, morningStartMins) &&
+    context.totalMinutes <= morningEndMins
+  ) {
     const idempotencyKey = `${context.firebaseUid}:morning_plan:${context.localDate}`;
     const alreadySentToday = context.lastNudge?.trigger === "morning_plan" &&
       isSameDay(context.lastNudge.createdAt, context.localDate);
@@ -352,8 +360,16 @@ export function decideNikkiNudge(
   }
 
   // 9. TRIGGER: evening_checkin
-  // Fires between 19:30 and 22:00 to reflect on today's wins and encourage winding down
-  if (context.totalMinutes >= 19 * 60 + 30 && context.totalMinutes <= 22 * 60) {
+  // Fires starting at user's preferred eveningCheckInTime (default 20:00) through +2h (or 22:00)
+  const [eH, eM] = (context.eveningCheckInTime || "20:00").split(":").map(Number);
+  const eveningStartMins = (Number.isFinite(eH) ? eH : 20) * 60 + (Number.isFinite(eM) ? eM : 0);
+  const eveningEndMins = Math.max(eveningStartMins + 120, 22 * 60);
+
+  if (
+    context.eveningCheckInEnabled !== false &&
+    context.totalMinutes >= eveningStartMins &&
+    context.totalMinutes <= eveningEndMins
+  ) {
     const idempotencyKey = `${context.firebaseUid}:evening_checkin:${context.localDate}`;
     const alreadySentToday = context.lastNudge?.trigger === "evening_checkin" &&
       isSameDay(context.lastNudge.createdAt, context.localDate);

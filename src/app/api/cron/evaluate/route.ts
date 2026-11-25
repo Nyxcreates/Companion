@@ -4,6 +4,9 @@ import { PushSubscriptionModel } from "@/models/PushSubscription";
 import { UserModel } from "@/models/User";
 import { evaluateProactiveContext } from "@/services/notificationService";
 import { dispatchDueTimetableReminders } from "@/services/timetableReminderService";
+import { buildNikkiContext } from "@/lib/nikki/context";
+import { decideNikkiNudge } from "@/lib/nikki/decide";
+import { speakNikkiNudge } from "@/lib/nikki/speak";
 
 export const runtime = "nodejs";
 
@@ -25,6 +28,9 @@ export async function GET(request: NextRequest) {
     if (cronSecret) {
       const authHeader = request.headers.get("authorization");
       const urlKey = request.nextUrl.searchParams.get("key");
+
+      // Vercel Cron sends: Authorization: Bearer <CRON_SECRET>
+      // Manual trigger can also use ?key=<CRON_SECRET>
       const isAuthorized =
         authHeader === `Bearer ${cronSecret}` || urlKey === cronSecret;
 
@@ -32,6 +38,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
     }
+    // Note: If CRON_SECRET is not set, the endpoint is open (acceptable for development).
 
     await connectToDatabase();
 
@@ -49,7 +56,8 @@ export async function GET(request: NextRequest) {
     }
 
     let totalNotificationsGenerated = 0;
-    const results: Array<{ uid: string; count: number }> = [];
+    let totalNikkiNudgesSent = 0;
+    const results: Array<{ uid: string; count: number; nikkiTrigger?: string }> = [];
 
     // Evaluate each user sequentially to avoid database overload
     for (const uid of subscribedUids) {
@@ -59,7 +67,22 @@ export async function GET(request: NextRequest) {
 
         const { newNotificationsCount } = await evaluateProactiveContext(uid, userTimezone);
         totalNotificationsGenerated += newNotificationsCount;
-        results.push({ uid, count: newNotificationsCount });
+
+        // Also run Nikki's proactive brain (morning 8AM, evening 8PM, late-night, tasks, deadlines, goals, wellbeing)
+        let nikkiTrigger: string | undefined;
+        try {
+          const context = await buildNikkiContext(uid);
+          const decision = decideNikkiNudge(context);
+          if (decision.shouldSpeak) {
+            await speakNikkiNudge(context, decision);
+            nikkiTrigger = decision.trigger;
+            totalNikkiNudgesSent++;
+          }
+        } catch (nikkiErr) {
+          console.error(`[Companion Cron] Nikki brain failed for user ${uid}:`, nikkiErr);
+        }
+
+        results.push({ uid, count: newNotificationsCount, nikkiTrigger });
       } catch (userErr) {
         // Non-fatal per-user error
         console.error(`[Companion Cron] Evaluation failed for user ${uid}:`, userErr);
@@ -78,6 +101,7 @@ export async function GET(request: NextRequest) {
       data: {
         evaluatedUsers: subscribedUids.length,
         totalNotificationsGenerated,
+        totalNikkiNudgesSent,
         results,
         timetableDispatch: timetableDispatchResult,
         timestamp: new Date().toISOString(),

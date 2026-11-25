@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
       body: message,
       url,
       tag: "companion-test-notification",
+      bypassQuietHours: true,
     });
 
     return NextResponse.json({

@@ -101,6 +101,7 @@ export async function speakNikkiNudge(
       body: messageText,
       actionUrl: `/?openNikki=${String(nudge._id)}`,
       actionLabel: "Talk to Nikki",
+      userTimezone: context.timezone || "UTC",
       metadata: {
         nudgeId: String(nudge._id),
         trigger: decision.trigger,

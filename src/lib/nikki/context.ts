@@ -131,6 +131,10 @@ export interface NikkiContextSnapshot {
   quietHoursStart: string | null;
   quietHoursEnd: string | null;
   isQuietHours: boolean;
+  morningCheckInEnabled: boolean;
+  morningCheckInTime: string;
+  eveningCheckInEnabled: boolean;
+  eveningCheckInTime: string;
   isPaused: boolean;
   pausedUntil: Date | null;
   proactiveEnabled: boolean;
@@ -777,6 +781,10 @@ export async function buildNikkiContext(
     quietHoursStart,
     quietHoursEnd,
     isQuietHours,
+    morningCheckInEnabled: prefs?.morningCheckInEnabled !== false,
+    morningCheckInTime: prefs?.morningCheckInTime ?? "08:00",
+    eveningCheckInEnabled: prefs?.eveningCheckInEnabled !== false,
+    eveningCheckInTime: prefs?.eveningCheckInTime ?? "20:00",
     isPaused,
     pausedUntil: prefs?.pausedUntil ? new Date(prefs.pausedUntil) : null,
     proactiveEnabled,

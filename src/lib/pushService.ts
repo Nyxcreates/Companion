@@ -4,6 +4,47 @@ import { PushSubscriptionModel } from "@/models/PushSubscription";
 import { NotificationPreferenceModel } from "@/models/NotificationPreference";
 import type { NotificationCategory } from "@/lib/notifications/categories";
 
+/** Returns true if the current time (in the given IANA timezone) is within quiet hours. */
+function isWithinQuietHours(
+  quietStart: string | undefined | null,
+  quietEnd: string | undefined | null,
+  timezone: string | undefined | null
+): boolean {
+  if (!quietStart || !quietEnd) return false;
+
+  try {
+    const tz = timezone || "UTC";
+    const now = new Date();
+
+    // Get current HH:MM in user's timezone
+    const localTime = new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: tz,
+    }).format(now);
+
+    const [nowH, nowM] = localTime.split(":").map(Number);
+    const nowMins = nowH * 60 + nowM;
+
+    const [startH, startM] = quietStart.split(":").map(Number);
+    const startMins = startH * 60 + startM;
+
+    const [endH, endM] = quietEnd.split(":").map(Number);
+    const endMins = endH * 60 + endM;
+
+    if (startMins <= endMins) {
+      // e.g. 09:00–17:00 (same day)
+      return nowMins >= startMins && nowMins < endMins;
+    } else {
+      // Overnight window, e.g. 22:00–07:00
+      return nowMins >= startMins || nowMins < endMins;
+    }
+  } catch {
+    return false;
+  }
+}
+
 export interface SendPushOptions {
   title: string;
   body: string;
@@ -13,6 +54,10 @@ export interface SendPushOptions {
   category?: NotificationCategory;
   actions?: Array<{ action: string; title: string }>;
   data?: Record<string, unknown>;
+  /** IANA timezone of the user (e.g. "Asia/Kolkata"). Used for quiet-hours enforcement. */
+  userTimezone?: string;
+  /** Set to true to bypass quiet hours (e.g. for test pushes or critical alerts). */
+  bypassQuietHours?: boolean;
 }
 
 export interface PushDeliveryResult {
@@ -25,11 +70,15 @@ export interface PushDeliveryResult {
 
 let vapidConfigured = false;
 
-const DEFAULT_PUBLIC_KEY =
-  "BH89b0i3uIdb4yL7tB-13hB5_JXAEA5MfDrhoBdgf4OnycEDRanelJPU-j2dqt2kC_QvRxXwBpj158HDR_F43IE";
-
 export function getVapidPublicKey(): string {
-  return process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || DEFAULT_PUBLIC_KEY;
+  const key = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY;
+  if (!key) {
+    console.warn(
+      "[Companion pushService] NEXT_PUBLIC_VAPID_PUBLIC_KEY is not set. " +
+      "Generate keys with: npx web-push generate-vapid-keys"
+    );
+  }
+  return key || "";
 }
 
 function ensureVapidConfigured(): boolean {
@@ -91,6 +140,19 @@ export async function sendPushToUser(
       return {
         success: false,
         reason: "NOTIFICATIONS_PAUSED",
+        sentCount: 0,
+        removedCount: 0,
+      };
+    }
+
+    // Check quiet hours using user's timezone (passed in options or default UTC)
+    if (
+      !options.bypassQuietHours &&
+      isWithinQuietHours(prefs.quietHoursStart, prefs.quietHoursEnd, options.userTimezone || "UTC")
+    ) {
+      return {
+        success: false,
+        reason: `QUIET_HOURS: ${prefs.quietHoursStart ?? "22:30"} – ${prefs.quietHoursEnd ?? "07:00"}`,
         sentCount: 0,
         removedCount: 0,
       };

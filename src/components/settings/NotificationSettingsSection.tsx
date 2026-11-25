@@ -487,6 +487,65 @@ export function NotificationSettingsSection() {
         </div>
       </div>
 
+      {/* Morning & Evening Check-In Preferences */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-white/5 pt-4">
+        <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-ink-primary">
+              Morning Check-In
+            </label>
+            <input
+              type="checkbox"
+              checked={preferences.morningCheckInEnabled !== false}
+              onChange={(e) =>
+                updatePreferences({ morningCheckInEnabled: e.target.checked })
+              }
+              className="rounded border-white/20 bg-white/10 text-cyan-400 focus:ring-0"
+            />
+          </div>
+          <p className="text-[11px] text-ink-muted">
+            Nikki&apos;s wake-up greeting, water reminder, and first task nudge.
+          </p>
+          <input
+            type="time"
+            disabled={preferences.morningCheckInEnabled === false}
+            value={preferences.morningCheckInTime ?? "08:00"}
+            onChange={(e) =>
+              updatePreferences({ morningCheckInTime: e.target.value })
+            }
+            className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs text-white focus:border-cyan-400 focus:outline-none disabled:opacity-40"
+          />
+        </div>
+
+        <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-ink-primary">
+              Evening Check-In
+            </label>
+            <input
+              type="checkbox"
+              checked={preferences.eveningCheckInEnabled !== false}
+              onChange={(e) =>
+                updatePreferences({ eveningCheckInEnabled: e.target.checked })
+              }
+              className="rounded border-white/20 bg-white/10 text-cyan-400 focus:ring-0"
+            />
+          </div>
+          <p className="text-[11px] text-ink-muted">
+            Nikki&apos;s evening reflection on your day&apos;s wins and winding down.
+          </p>
+          <input
+            type="time"
+            disabled={preferences.eveningCheckInEnabled === false}
+            value={preferences.eveningCheckInTime ?? "20:00"}
+            onChange={(e) =>
+              updatePreferences({ eveningCheckInTime: e.target.value })
+            }
+            className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs text-white focus:border-cyan-400 focus:outline-none disabled:opacity-40"
+          />
+        </div>
+      </div>
+
       {/* Quiet Hours & Intervals Form */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-white/5 pt-4">
         <div>

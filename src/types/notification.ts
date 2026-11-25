@@ -35,6 +35,10 @@ export interface NotificationPreferences {
   categoriesEnabled: Record<NotificationCategory, boolean>;
   quietHoursStart: string | null;
   quietHoursEnd: string | null;
+  morningCheckInEnabled?: boolean;
+  morningCheckInTime?: string;
+  eveningCheckInEnabled?: boolean;
+  eveningCheckInTime?: string;
   checkInFrequency: CheckInFrequency;
   floatingPresence: FloatingPresenceMode;
   breakIntervalMinutes: number;
