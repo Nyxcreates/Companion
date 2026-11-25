@@ -605,6 +605,47 @@ await asyncTest("FullscreenDetector recognizes Windows QUNS suppression states",
   assert(res.suppressed === true && res.stateCode === 3, "Should detect D3D fullscreen");
 });
 
+test("TrayManager supports Start with Windows toggle", () => {
+  let toggled = false;
+  const tm = new TrayManager({
+    onOpen: () => {},
+    onShowHideNikki: () => {},
+    onPause: () => {},
+    onResume: () => {},
+    onToggleAutoLaunch: () => {
+      toggled = true;
+    },
+    onExit: () => {},
+    getNikkiVisible: () => true,
+    getNikkiPaused: () => false,
+    getAutoLaunch: () => true,
+  });
+  const item = tm.tray.menu.items.find((i) => i.label === "Start with Windows");
+  assert(item, "Should have Start with Windows menu item");
+  assert(item.checked === true, "Should reflect getAutoLaunch state");
+  item.click();
+  assert(toggled === true, "Should invoke onToggleAutoLaunch callback");
+  tm.destroy();
+});
+
+test("Floating route supports inline reply and proactive nudge polling", () => {
+  const fs = require("fs");
+  const source = fs.readFileSync(
+    join(__dirname, "..", "src", "app", "desktop", "floating", "page.tsx"),
+    "utf8"
+  );
+  assert(source.includes("/api/nikki/nudge/reply"), "Should post inline replies to /api/nikki/nudge/reply");
+  assert(source.includes("/api/nikki/nudge"), "Should poll /api/nikki/nudge for proactive check-ins");
+  assert(source.includes("Reply to Nikki..."), "Should render inline reply input");
+});
+
+test("main.js disables backgroundThrottling and supports setLoginItemSettings", () => {
+  const fs = require("fs");
+  const source = fs.readFileSync(join(__dirname, "main.js"), "utf8");
+  assert(source.includes("backgroundThrottling: false"), "Should keep background timers active when hidden");
+  assert(source.includes("setLoginItemSettings"), "Should support Start with Windows via setLoginItemSettings");
+});
+
 // ── Summary ──────────────────────────────────────────────────────────────────
 
 console.log(`\n${"═".repeat(50)}`);

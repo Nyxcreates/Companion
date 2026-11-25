@@ -28,11 +28,13 @@ class TrayManager {
    * @param {() => void} callbacks.onResume
    * @param {() => void} [callbacks.onToggleDnd]
    * @param {() => void} [callbacks.onToggleAllowFullscreen]
+   * @param {() => void} [callbacks.onToggleAutoLaunch]
    * @param {() => void} callbacks.onExit
    * @param {() => boolean} callbacks.getNikkiVisible
    * @param {() => boolean} callbacks.getNikkiPaused
    * @param {() => boolean} [callbacks.getNikkiDnd]
    * @param {() => boolean} [callbacks.getAllowFullscreen]
+   * @param {() => boolean} [callbacks.getAutoLaunch]
    */
   constructor(callbacks) {
     this.callbacks = callbacks;
@@ -79,6 +81,9 @@ class TrayManager {
     const allowFullscreen = this.callbacks.getAllowFullscreen
       ? this.callbacks.getAllowFullscreen()
       : false;
+    const autoLaunch = this.callbacks.getAutoLaunch
+      ? this.callbacks.getAutoLaunch()
+      : false;
 
     const statusLabel = this._getStatusLabel();
 
@@ -117,6 +122,14 @@ class TrayManager {
         click: () =>
           this.callbacks.onToggleAllowFullscreen &&
           this.callbacks.onToggleAllowFullscreen(),
+      },
+      {
+        label: "Start with Windows",
+        type: "checkbox",
+        checked: autoLaunch,
+        click: () =>
+          this.callbacks.onToggleAutoLaunch &&
+          this.callbacks.onToggleAutoLaunch(),
       },
       { type: "separator" },
       {

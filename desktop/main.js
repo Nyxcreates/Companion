@@ -89,6 +89,7 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false,
     },
   });
 
@@ -148,12 +149,14 @@ app.whenReady().then(() => {
     onResume: () => resumeNikki(),
     onToggleDnd: () => toggleDnd(),
     onToggleAllowFullscreen: () => toggleAllowFullscreen(),
+    onToggleAutoLaunch: () => toggleAutoLaunch(),
     onExit: () => exitApp(),
     getNikkiVisible: () => nikkiVisible,
     getNikkiPaused: () => nikkiPaused,
     getNikkiDnd: () => (floatingManager ? floatingManager.dnd : false),
     getAllowFullscreen: () =>
       floatingManager ? floatingManager.allowOverFullscreen : false,
+    getAutoLaunch: () => getAutoLaunchEnabled(),
   });
 
   // Set up session watcher for auth/online status
@@ -267,6 +270,24 @@ function toggleAllowFullscreen() {
   if (!floatingManager) return;
   floatingManager.setAllowOverFullscreen(!floatingManager.allowOverFullscreen);
   if (trayManager) trayManager.updateMenu();
+}
+
+function getAutoLaunchEnabled() {
+  try {
+    return Boolean(app.getLoginItemSettings().openAtLogin);
+  } catch {
+    return false;
+  }
+}
+
+function toggleAutoLaunch() {
+  try {
+    const next = !getAutoLaunchEnabled();
+    app.setLoginItemSettings({ openAtLogin: next });
+    if (trayManager) trayManager.updateMenu();
+  } catch {
+    // Ignore on platforms where login items are unavailable
+  }
 }
 
 // ── IPC handlers ─────────────────────────────────────────────────────────────
