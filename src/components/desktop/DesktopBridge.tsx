@@ -79,6 +79,18 @@ export function DesktopBridge() {
     });
     cleanups.push(unsubPause);
 
+    // Forward meaningful nudges from NikkiProactivePresence → native floating Nikki window
+    const handleNudgeForward = (e: Event) => {
+      const nudge = (e as CustomEvent).detail;
+      if (nudge && window.companionDesktop?.forwardNudgeToFloating) {
+        window.companionDesktop.forwardNudgeToFloating(nudge);
+      }
+    };
+    window.addEventListener("companion:nudge-received", handleNudgeForward);
+    cleanups.push(() =>
+      window.removeEventListener("companion:nudge-received", handleNudgeForward)
+    );
+
     return () => {
       cleanups.forEach((fn) => fn());
     };

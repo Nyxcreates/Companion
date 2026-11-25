@@ -70,4 +70,82 @@ contextBridge.exposeInMainWorld("companionDesktop", {
     ipcRenderer.on("companion:nikki-pause", handler);
     return () => ipcRenderer.removeListener("companion:nikki-pause", handler);
   },
+
+  // ── Part 5C: Floating Nikki Overlay IPC ────────────────────────────────────
+
+  /**
+   * Toggle click-through on the floating Nikki window.
+   * @param {boolean} ignore
+   */
+  setFloatingIgnoreMouse: (ignore) => {
+    ipcRenderer.send("companion:floating-ignore-mouse", Boolean(ignore));
+  },
+
+  /**
+   * Move the floating Nikki window by (dx, dy) pixels.
+   * @param {number} dx
+   * @param {number} dy
+   */
+  moveFloatingWindow: (dx, dy) => {
+    if (typeof dx === "number" && typeof dy === "number") {
+      ipcRenderer.send("companion:floating-move", { dx, dy });
+    }
+  },
+
+  /**
+   * Minimize or expand the floating Nikki overlay.
+   * @param {boolean} minimized
+   */
+  setFloatingMinimized: (minimized) => {
+    ipcRenderer.send("companion:floating-minimized", Boolean(minimized));
+  },
+
+  /**
+   * Hide the floating Nikki overlay (user-controlled visibility).
+   */
+  hideFloatingNikki: () => {
+    ipcRenderer.send("companion:floating-hide");
+  },
+
+  /**
+   * Open the main Companion conversation window (optionally focused on a nudge).
+   * @param {string} [nudgeId]
+   */
+  openMainConversation: (nudgeId) => {
+    ipcRenderer.send("companion:open-conversation", {
+      nudgeId: typeof nudgeId === "string" ? nudgeId : null,
+    });
+  },
+
+  /**
+   * Forward a meaningful nudge from the main app to the floating Nikki overlay.
+   * @param {object} nudge
+   */
+  forwardNudgeToFloating: (nudge) => {
+    if (nudge && typeof nudge === "object") {
+      ipcRenderer.send("companion:floating-nudge-forward", nudge);
+    }
+  },
+
+  /**
+   * Listen for nudges pushed to the floating Nikki overlay.
+   * @param {(nudge: object) => void} callback
+   * @returns {() => void} unsubscribe function
+   */
+  onFloatingNudge: (callback) => {
+    const handler = (_event, nudge) => callback(nudge);
+    ipcRenderer.on("companion:floating-nudge", handler);
+    return () => ipcRenderer.removeListener("companion:floating-nudge", handler);
+  },
+
+  /**
+   * Listen for floating overlay state updates (minimized, paused, dnd, etc.).
+   * @param {(state: object) => void} callback
+   * @returns {() => void} unsubscribe function
+   */
+  onFloatingState: (callback) => {
+    const handler = (_event, state) => callback(state);
+    ipcRenderer.on("companion:floating-state", handler);
+    return () => ipcRenderer.removeListener("companion:floating-state", handler);
+  },
 });

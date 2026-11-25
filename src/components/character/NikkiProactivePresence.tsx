@@ -537,6 +537,11 @@ export function NikkiProactivePresence() {
       const env = await res.json();
       if (env?.data) {
         setActiveNudge(env.data);
+        try {
+          window.dispatchEvent(
+            new CustomEvent("companion:nudge-received", { detail: env.data })
+          );
+        } catch {}
         // Only open/reset the bubble if it isn't already in an active conversation
         setBubbleConversation((prev) => {
           if (prev.length > 0 && isConversationalOpen) {

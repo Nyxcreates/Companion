@@ -101,6 +101,47 @@ Module._resolveFilename = function (request, parent, isMain, options) {
 
 // Create a mock electron module
 const mockElectron = {
+  BrowserWindow: class MockBrowserWindow {
+    constructor(opts) {
+      this.opts = opts;
+      this._visible = false;
+      this._pos = [opts.x || 0, opts.y || 0];
+      this._alwaysOnTop = false;
+      this._ignoreMouse = false;
+      this._destroyed = false;
+      this.sent = [];
+      this.webContents = {
+        on: () => {},
+        send: (ch, data) => this.sent.push({ ch, data }),
+        executeJavaScript: () => Promise.resolve(),
+      };
+    }
+    loadURL() {}
+    once() {}
+    on() {}
+    setAlwaysOnTop(val) { this._alwaysOnTop = val; }
+    setVisibleOnAllWorkspaces() {}
+    setIgnoreMouseEvents(val) { this._ignoreMouse = val; }
+    getPosition() { return this._pos; }
+    setPosition(x, y) { this._pos = [x, y]; }
+    isVisible() { return this._visible; }
+    showInactive() { this._visible = true; }
+    hide() { this._visible = false; }
+    isDestroyed() { return this._destroyed; }
+    destroy() { this._destroyed = true; this._visible = false; }
+  },
+  screen: {
+    getPrimaryDisplay: () => ({ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1040 } }),
+    getAllDisplays: () => [
+      { id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1040 } },
+      { id: 2, workArea: { x: 1920, y: 0, width: 1920, height: 1040 } },
+    ],
+    getDisplayNearestPoint: ({ x }) =>
+      x >= 1920
+        ? { id: 2, workArea: { x: 1920, y: 0, width: 1920, height: 1040 } }
+        : { id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1040 } },
+    on: () => {},
+  },
   Tray: class MockTray {
     constructor() {
       Object.assign(this, { ...mockTrayInstance, destroyed: false, balloonShown: null });
@@ -436,10 +477,9 @@ test("Window close hides instead of quitting (structural check)", () => {
 test("Exit sets isQuitting true before quit", () => {
   const fs = require("fs");
   const source = fs.readFileSync(join(__dirname, "main.js"), "utf8");
-  const exitFn = source.substring(
-    source.indexOf("function exitApp"),
-    source.indexOf("function exitApp") + 200
-  );
+  const start = source.indexOf("function exitApp");
+  const end = source.indexOf("}", source.indexOf("app.quit", start)) + 1;
+  const exitFn = source.substring(start, end > start ? end : start + 400);
   assert(exitFn.includes("isQuitting = true"), "exitApp should set isQuitting = true");
   assert(exitFn.includes("app.quit"), "exitApp should call app.quit");
 });
@@ -455,6 +495,114 @@ test("DesktopBridge.tsx exists for web app integration", () => {
 test("Desktop type declarations exist", () => {
   const typesPath = join(__dirname, "..", "src", "types", "desktop.ts");
   assert(existsSync(typesPath), "desktop.ts types not found at " + typesPath);
+});
+
+// ── 6. Part 5C: Floating Nikki Overlay & Fullscreen Suppression ──────────────
+console.log("\n── Part 5C: Floating Overlay ──");
+
+const { FloatingManager, clampPositionToWorkArea, DEFAULT_WIDTH, DEFAULT_HEIGHT } = require("./floating.js");
+const { FullscreenDetector, SUPPRESSED_STATES } = require("./fullscreen.js");
+
+test("floating.js & fullscreen.js exist", () => {
+  assert(existsSync(join(__dirname, "floating.js")), "floating.js not found");
+  assert(existsSync(join(__dirname, "fullscreen.js")), "fullscreen.js not found");
+});
+
+test("Floating web route /desktop/floating exists", () => {
+  const routePath = join(__dirname, "..", "src", "app", "desktop", "floating", "page.tsx");
+  assert(existsSync(routePath), "src/app/desktop/floating/page.tsx not found");
+});
+
+test("clampPositionToWorkArea clamps off-screen and snaps to edges", () => {
+  const wa = { x: 0, y: 0, width: 1920, height: 1040 };
+  const clampedNeg = clampPositionToWorkArea(-100, -50, DEFAULT_WIDTH, DEFAULT_HEIGHT, wa, true);
+  assert(clampedNeg.x === 4 && clampedNeg.y === 4, `Expected (4,4), got (${clampedNeg.x},${clampedNeg.y})`);
+
+  const clampedOver = clampPositionToWorkArea(5000, 5000, DEFAULT_WIDTH, DEFAULT_HEIGHT, wa, true);
+  assert(
+    clampedOver.x === 1920 - DEFAULT_WIDTH - 4 && clampedOver.y === 1040 - DEFAULT_HEIGHT - 4,
+    `Unexpected max clamp: (${clampedOver.x},${clampedOver.y})`
+  );
+});
+
+test("FloatingManager creates transparent always-on-top window", () => {
+  const fm = new FloatingManager({ baseUrl: "http://localhost:3000" });
+  const win = fm.create();
+  assert(win.opts.transparent === true, "Window must be transparent");
+  assert(win.opts.frame === false, "Window must be frameless");
+  assert(win.opts.alwaysOnTop === true, "Window must be alwaysOnTop");
+  assert(win.opts.skipTaskbar === true, "Window must skip taskbar");
+  assert(win._ignoreMouse === true, "Window must default to click-through");
+  fm.destroy();
+});
+
+test("FloatingManager moveBy supports multi-monitor and persists position", () => {
+  const fm = new FloatingManager({ baseUrl: "http://localhost:3000" });
+  const win = fm.create();
+  win.setPosition(1800, 500);
+  fm.moveBy(250, 0); // Moves onto second monitor (x >= 1920)
+  const [nx] = win.getPosition();
+  assert(nx >= 1920, `Expected x >= 1920 on second monitor, got ${nx}`);
+  assert(fm.store.get("displayId") === 2, "Should persist second monitor ID");
+  fm.destroy();
+});
+
+test("FloatingManager hides when paused, DND, or fullscreen suppressed", () => {
+  const fm = new FloatingManager({ baseUrl: "http://localhost:3000" });
+  fm.create();
+  assert(fm.shouldShow() === true, "Initially shouldShow is true");
+
+  fm.setPaused(true);
+  assert(fm.shouldShow() === false, "Should hide when paused");
+  fm.setPaused(false);
+  assert(fm.shouldShow() === true, "Should show when resumed");
+
+  fm.setDnd(true);
+  assert(fm.shouldShow() === false, "Should hide in DND mode");
+  fm.setDnd(false);
+
+  fm.suppressedByFullscreen = true;
+  assert(fm.shouldShow() === false, "Should hide during fullscreen app");
+  fm.setAllowOverFullscreen(true);
+  assert(fm.shouldShow() === true, "Should show when allowOverFullscreen is enabled");
+  fm.destroy();
+});
+
+test("FloatingManager forwards nudges only when not paused/DND/suppressed", () => {
+  const fm = new FloatingManager({ baseUrl: "http://localhost:3000" });
+  const win = fm.create();
+  const nudge = { id: "n1", trigger: "task_overdue", message: "Hey!", pose: "concerned" };
+
+  assert(fm.showNudge(nudge) === true, "Should forward nudge when active");
+  assert(
+    win.sent.some((m) => m.ch === "companion:floating-nudge" && m.data.id === "n1"),
+    "Nudge should be sent to floating renderer"
+  );
+
+  fm.setPaused(true);
+  assert(fm.showNudge(nudge) === false, "Should suppress nudge when paused");
+  fm.destroy();
+});
+
+async function asyncTest(name, fn) {
+  try {
+    await fn();
+    console.log(`  ✅ ${name}`);
+    passed++;
+  } catch (err) {
+    console.log(`  ❌ ${name}`);
+    console.log(`     ${err.message}`);
+    failed++;
+  }
+}
+
+await asyncTest("FullscreenDetector recognizes Windows QUNS suppression states", async () => {
+  assert(SUPPRESSED_STATES.has(2) && SUPPRESSED_STATES.has(3) && SUPPRESSED_STATES.has(4) && SUPPRESSED_STATES.has(6));
+  const detector = new FullscreenDetector({
+    queryFn: async () => ({ suppressed: true, quietTime: false, stateCode: 3 }),
+  });
+  const res = await detector.check();
+  assert(res.suppressed === true && res.stateCode === 3, "Should detect D3D fullscreen");
 });
 
 // ── Summary ──────────────────────────────────────────────────────────────────

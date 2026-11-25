@@ -26,9 +26,13 @@ class TrayManager {
    * @param {() => void} callbacks.onShowHideNikki
    * @param {() => void} callbacks.onPause
    * @param {() => void} callbacks.onResume
+   * @param {() => void} [callbacks.onToggleDnd]
+   * @param {() => void} [callbacks.onToggleAllowFullscreen]
    * @param {() => void} callbacks.onExit
    * @param {() => boolean} callbacks.getNikkiVisible
    * @param {() => boolean} callbacks.getNikkiPaused
+   * @param {() => boolean} [callbacks.getNikkiDnd]
+   * @param {() => boolean} [callbacks.getAllowFullscreen]
    */
   constructor(callbacks) {
     this.callbacks = callbacks;
@@ -71,6 +75,10 @@ class TrayManager {
 
     const nikkiVisible = this.callbacks.getNikkiVisible();
     const nikkiPaused = this.callbacks.getNikkiPaused();
+    const nikkiDnd = this.callbacks.getNikkiDnd ? this.callbacks.getNikkiDnd() : false;
+    const allowFullscreen = this.callbacks.getAllowFullscreen
+      ? this.callbacks.getAllowFullscreen()
+      : false;
 
     const statusLabel = this._getStatusLabel();
 
@@ -96,6 +104,20 @@ class TrayManager {
         enabled: nikkiPaused,
         visible: nikkiPaused,
       },
+      {
+        label: "Do Not Disturb",
+        type: "checkbox",
+        checked: nikkiDnd,
+        click: () => this.callbacks.onToggleDnd && this.callbacks.onToggleDnd(),
+      },
+      {
+        label: "Allow Over Full-Screen",
+        type: "checkbox",
+        checked: allowFullscreen,
+        click: () =>
+          this.callbacks.onToggleAllowFullscreen &&
+          this.callbacks.onToggleAllowFullscreen(),
+      },
       { type: "separator" },
       {
         label: statusLabel,
@@ -120,6 +142,8 @@ class TrayManager {
     if (!this.authenticated) return "⚠ Not signed in";
     const paused = this.callbacks.getNikkiPaused();
     if (paused) return "⏸ Nikki paused";
+    const dnd = this.callbacks.getNikkiDnd ? this.callbacks.getNikkiDnd() : false;
+    if (dnd) return "🌙 Do Not Disturb";
     return "✨ Nikki is active";
   }
 

@@ -17,6 +17,8 @@ const { app, BrowserWindow, ipcMain, nativeImage } = require("electron");
 const path = require("path");
 const { TrayManager } = require("./tray");
 const { SessionWatcher } = require("./session");
+const { FloatingManager } = require("./floating");
+const { FullscreenDetector } = require("./fullscreen");
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
@@ -46,6 +48,12 @@ let trayManager = null;
 
 /** @type {SessionWatcher | null} */
 let sessionWatcher = null;
+
+/** @type {FloatingManager | null} */
+let floatingManager = null;
+
+/** @type {FullscreenDetector | null} */
+let fullscreenDetector = null;
 
 /** Whether the user genuinely chose "Exit Companion" (vs. window close). */
 let isQuitting = false;
@@ -121,15 +129,31 @@ function createMainWindow() {
 app.whenReady().then(() => {
   createMainWindow();
 
+  // Set up floating Nikki overlay (Part 5C)
+  fullscreenDetector = new FullscreenDetector();
+  floatingManager = new FloatingManager({
+    baseUrl: COMPANION_URL,
+    fullscreenDetector,
+    onStateChange: () => {
+      if (trayManager) trayManager.updateMenu();
+    },
+  });
+  floatingManager.create();
+
   // Set up system tray
   trayManager = new TrayManager({
     onOpen: () => showWindow(),
     onShowHideNikki: () => toggleNikki(),
     onPause: () => pauseNikki(),
     onResume: () => resumeNikki(),
+    onToggleDnd: () => toggleDnd(),
+    onToggleAllowFullscreen: () => toggleAllowFullscreen(),
     onExit: () => exitApp(),
     getNikkiVisible: () => nikkiVisible,
     getNikkiPaused: () => nikkiPaused,
+    getNikkiDnd: () => (floatingManager ? floatingManager.dnd : false),
+    getAllowFullscreen: () =>
+      floatingManager ? floatingManager.allowOverFullscreen : false,
   });
 
   // Set up session watcher for auth/online status
@@ -187,6 +211,10 @@ function showWindow() {
 
 function exitApp() {
   isQuitting = true;
+  if (floatingManager) {
+    floatingManager.destroy();
+    floatingManager = null;
+  }
   if (trayManager) {
     trayManager.destroy();
     trayManager = null;
@@ -194,12 +222,15 @@ function exitApp() {
   app.quit();
 }
 
-// ── Nikki visibility / pause ─────────────────────────────────────────────────
+// ── Nikki visibility / pause / DND ───────────────────────────────────────────
 
 function toggleNikki() {
   nikkiVisible = !nikkiVisible;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("companion:nikki-visibility", nikkiVisible);
+  }
+  if (floatingManager) {
+    floatingManager.setVisible(nikkiVisible);
   }
   if (trayManager) trayManager.updateMenu();
 }
@@ -209,6 +240,9 @@ function pauseNikki() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("companion:nikki-pause", true);
   }
+  if (floatingManager) {
+    floatingManager.setPaused(true);
+  }
   if (trayManager) trayManager.updateMenu();
 }
 
@@ -217,6 +251,21 @@ function resumeNikki() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("companion:nikki-pause", false);
   }
+  if (floatingManager) {
+    floatingManager.setPaused(false);
+  }
+  if (trayManager) trayManager.updateMenu();
+}
+
+function toggleDnd() {
+  if (!floatingManager) return;
+  floatingManager.setDnd(!floatingManager.dnd);
+  if (trayManager) trayManager.updateMenu();
+}
+
+function toggleAllowFullscreen() {
+  if (!floatingManager) return;
+  floatingManager.setAllowOverFullscreen(!floatingManager.allowOverFullscreen);
   if (trayManager) trayManager.updateMenu();
 }
 
@@ -227,6 +276,9 @@ function registerIPC() {
   ipcMain.on("companion:auth-state", (_event, state) => {
     if (trayManager) {
       trayManager.setAuthState(state); // { authenticated: boolean }
+    }
+    if (floatingManager) {
+      floatingManager.setAuthenticated(Boolean(state?.authenticated));
     }
   });
 
@@ -254,4 +306,56 @@ function registerIPC() {
 
   // Handle synchronous check for desktop mode.
   ipcMain.handle("companion:is-desktop", () => true);
+
+  // ── Part 5C: Floating Nikki IPC ────────────────────────────────────────────
+  ipcMain.on("companion:floating-ignore-mouse", (_event, ignore) => {
+    if (floatingManager) {
+      floatingManager.setIgnoreMouse(Boolean(ignore));
+    }
+  });
+
+  ipcMain.on("companion:floating-move", (_event, coords) => {
+    if (
+      floatingManager &&
+      coords &&
+      typeof coords.dx === "number" &&
+      typeof coords.dy === "number"
+    ) {
+      floatingManager.moveBy(coords.dx, coords.dy);
+    }
+  });
+
+  ipcMain.on("companion:floating-minimized", (_event, minimized) => {
+    if (floatingManager) {
+      floatingManager.setMinimized(Boolean(minimized));
+    }
+  });
+
+  ipcMain.on("companion:floating-hide", () => {
+    nikkiVisible = false;
+    if (floatingManager) {
+      floatingManager.setVisible(false);
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("companion:nikki-visibility", false);
+    }
+    if (trayManager) trayManager.updateMenu();
+  });
+
+  ipcMain.on("companion:floating-nudge-forward", (_event, nudge) => {
+    if (floatingManager) {
+      floatingManager.showNudge(nudge);
+    }
+  });
+
+  ipcMain.on("companion:open-conversation", (_event, payload) => {
+    showWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const nudgeId = payload?.nudgeId;
+      const targetUrl = nudgeId
+        ? `${COMPANION_URL.replace(/\/$/, "")}/dashboard?openNikki=${encodeURIComponent(nudgeId)}`
+        : `${COMPANION_URL.replace(/\/$/, "")}/dashboard`;
+      mainWindow.loadURL(targetUrl);
+    }
+  });
 }
