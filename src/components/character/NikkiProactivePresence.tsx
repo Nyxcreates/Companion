@@ -433,6 +433,42 @@ export function NikkiProactivePresence() {
     }
   }, []);
 
+  // ── Desktop tray integration: Show/Hide Nikki and Pause/Resume ─────────────
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleVisibility = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.visible === false) {
+        setIsDismissed(true);
+      } else {
+        setIsDismissed(false);
+        setIsMinimized(false);
+        try { sessionStorage.removeItem(MINIMIZED_STORAGE_KEY); } catch {}
+      }
+    };
+
+    const handlePause = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      // Store pause state so the timetable alert engine and nudge poller respect it.
+      // The pause flag is surfaced via a sessionStorage key that the tick checks.
+      try {
+        if (detail?.paused) {
+          sessionStorage.setItem("companion:desktop-paused", "true");
+        } else {
+          sessionStorage.removeItem("companion:desktop-paused");
+        }
+      } catch {}
+    };
+
+    window.addEventListener("companion:desktop-nikki-visibility", handleVisibility);
+    window.addEventListener("companion:desktop-nikki-pause", handlePause);
+    return () => {
+      window.removeEventListener("companion:desktop-nikki-visibility", handleVisibility);
+      window.removeEventListener("companion:desktop-nikki-pause", handlePause);
+    };
+  }, []);
+
   // ── Restore active break from sessionStorage then server on mount ──────────
   useEffect(() => {
     if (!firebaseUser) return;
@@ -492,6 +528,9 @@ export function NikkiProactivePresence() {
   const fetchPendingNudge = useCallback(async () => {
     if (!firebaseUser) return;
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    try {
+      if (sessionStorage.getItem("companion:desktop-paused") === "true") return;
+    } catch {}
     try {
       const res = await authFetch("/api/nikki/nudge");
       if (!res.ok) return;
@@ -598,6 +637,10 @@ export function NikkiProactivePresence() {
       });
 
       // ── Timetable alert gates ──────────────────────────────────────────────
+      // Gate 0: desktop tray pause
+      try {
+        if (sessionStorage.getItem("companion:desktop-paused") === "true") return;
+      } catch {}
       // Gate 1: proactive must be enabled
       if (preferences?.proactiveEnabled === false) return;
       // Gate 2: notifications must not be paused

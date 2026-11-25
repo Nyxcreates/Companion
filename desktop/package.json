@@ -1,0 +1,20 @@
+{
+  "name": "companion-desktop",
+  "version": "1.0.0",
+  "description": "Companion Desktop — Nikki stays with you in the system tray",
+  "main": "main.js",
+  "author": "Companion",
+  "license": "PRIVATE",
+  "scripts": {
+    "start": "electron .",
+    "dev": "cross-env COMPANION_URL=http://localhost:3000 electron .",
+    "test": "node test-desktop.mjs"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.0"
+  }
+}

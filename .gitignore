@@ -41,6 +41,10 @@ Thumbs.db
 coverage/
 .nyc_output/
 
+# ── Electron / Desktop ────────────────────────────────────────────────────────
+desktop/node_modules/
+desktop/dist/
+
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 npm-debug.log*

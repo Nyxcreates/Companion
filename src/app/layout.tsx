@@ -10,6 +10,7 @@ import { UsageProvider } from "@/context/UsageContext";
 import { PwaProvider } from "@/context/PwaContext";
 import { MotionProvider } from "@/components/providers/MotionProvider";
 import { StartupSequence } from "@/components/startup/StartupSequence";
+import { DesktopBridge } from "@/components/desktop/DesktopBridge";
 import "./globals.css";
 
 const quicksand = localFont({
@@ -60,6 +61,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                         <MotionProvider>
                           {children}
                           <StartupSequence />
+                          <DesktopBridge />
                         </MotionProvider>
                       </PwaProvider>
                     </UsageProvider>
