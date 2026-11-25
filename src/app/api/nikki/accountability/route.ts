@@ -86,7 +86,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ data: result });
+    // Refresh Nikki's context after database changes
+    const { buildNikkiContext } = await import("@/lib/nikki/context");
+    const refreshed = await buildNikkiContext(user.uid).catch(() => null);
+
+    return NextResponse.json({
+      data: {
+        ...result,
+        contextUpdated: Boolean(refreshed),
+      },
+    });
   } catch (error) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: { message: error.message, code: error.code } }, { status: error.status });

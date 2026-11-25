@@ -154,25 +154,38 @@ export async function POST(request: NextRequest) {
 
     if (accountabilityAnalysis.intent !== "general") {
       let actionExecuted = false;
+      let contextUpdated = false;
+      let updatedContextSummary: Record<string, unknown> | undefined;
 
-      // Handle database execution if confirmed or explicitly instructed
+      // Handle database execution ONLY after explicit user confirmation
       if (accountabilityAnalysis.shouldModifyDatabase && targetId) {
         try {
           if (accountabilityAnalysis.intent === "confirm_action") {
-            const pendingSteps =
-              (nudgeDoc?.metadata?.proposedSteps as string[]) ||
-              generateDefaultSubSteps(targetTitle || "Task");
+            const pending = nudgeDoc?.metadata?.pendingAction as
+              | { action: string; targetType?: "task" | "goal"; payload?: Record<string, unknown> }
+              | undefined;
 
-            await executeAccountabilityAction({
-              action: "break_task",
-              firebaseUid: user.uid,
-              targetId,
-              targetType,
-              payload: { steps: pendingSteps, title: targetTitle },
-            });
-            actionExecuted = true;
+            if (pending?.action) {
+              const execRes = await executeAccountabilityAction({
+                action: pending.action,
+                firebaseUid: user.uid,
+                targetId,
+                targetType: pending.targetType || targetType,
+                payload: pending.payload || { title: targetTitle },
+              });
+              actionExecuted = Boolean(execRes?.ok);
+            } else if (Array.isArray(nudgeDoc?.metadata?.proposedSteps)) {
+              const execRes = await executeAccountabilityAction({
+                action: "break_task",
+                firebaseUid: user.uid,
+                targetId,
+                targetType,
+                payload: { steps: nudgeDoc.metadata.proposedSteps, title: targetTitle },
+              });
+              actionExecuted = Boolean(execRes?.ok);
+            }
           } else if (accountabilityAnalysis.actionToExecute) {
-            await executeAccountabilityAction({
+            const execRes = await executeAccountabilityAction({
               action: accountabilityAnalysis.actionToExecute,
               firebaseUid: user.uid,
               targetId,
@@ -184,7 +197,20 @@ export async function POST(request: NextRequest) {
                 title: targetTitle,
               },
             });
-            actionExecuted = true;
+            actionExecuted = Boolean(execRes?.ok);
+          }
+
+          // Refresh Nikki's context after database changes so her awareness stays current
+          if (actionExecuted) {
+            const { buildNikkiContext } = await import("@/lib/nikki/context");
+            const refreshed = await buildNikkiContext(user.uid, clientTimezone);
+            contextUpdated = true;
+            updatedContextSummary = {
+              pendingTasksCount: refreshed.totalPendingTasksCount,
+              completedTasksCountToday: refreshed.completedTasksCountToday,
+              neglectedGoalsCount: refreshed.neglectedGoals.length,
+              activeGoalsCount: refreshed.activeGoals.length,
+            };
           }
         } catch (actErr) {
           console.warn("[Companion Accountability Action] Execution error:", actErr);
@@ -208,6 +234,9 @@ export async function POST(request: NextRequest) {
           ...(nudgeDoc.metadata || {}),
           conversationId,
           proposedSteps: accountabilityAnalysis.proposedSteps || nudgeDoc.metadata?.proposedSteps,
+          pendingAction: actionExecuted
+            ? null
+            : accountabilityAnalysis.pendingAction ?? nudgeDoc.metadata?.pendingAction,
         };
         await nudgeDoc.save().catch(() => {});
       }
@@ -219,6 +248,9 @@ export async function POST(request: NextRequest) {
           intent: accountabilityAnalysis.intent,
           pose: accountabilityAnalysis.pose,
           goalTaskChanged: actionExecuted,
+          requiresConfirmation: Boolean(accountabilityAnalysis.requiresConfirmation),
+          contextUpdated,
+          updatedContextSummary,
         },
       });
     }

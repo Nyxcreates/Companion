@@ -13,6 +13,12 @@ export type AccountabilityIntentType =
   | "confirm_action"
   | "general";
 
+export interface PendingAccountabilityAction {
+  action: string;
+  targetType: "task" | "goal";
+  payload: Record<string, unknown>;
+}
+
 export interface AccountabilityAnalysis {
   intent: AccountabilityIntentType;
   targetId?: string | null;
@@ -24,6 +30,8 @@ export interface AccountabilityAnalysis {
   replyMessage?: string;
   pose: "happy" | "celebrate" | "concerned" | "think" | "sleepy" | "curious" | "wave";
   shouldModifyDatabase: boolean;
+  requiresConfirmation?: boolean;
+  pendingAction?: PendingAccountabilityAction;
   actionToExecute?: string;
 }
 
@@ -52,6 +60,7 @@ export function parseAccountabilityIntent(
       lower
     )
   ) {
+    const tomorrowIso = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     return {
       intent: "rest_and_fatigue",
       targetId: meta?.targetId,
@@ -60,24 +69,42 @@ export function parseAccountabilityIntent(
       replyMessage: `Okay, fair. Let's not overload you, ${userName}. Rest is completely valid, not a failure. We can give '${title}' 30 minutes tomorrow instead or let it breathe for now. Go take a breath and recharge today! 🌸`,
       pose: "sleepy",
       shouldModifyDatabase: false,
+      requiresConfirmation: false,
+      pendingAction: meta?.targetId
+        ? {
+            action: meta?.targetType === "goal" ? "adjust_goal" : "reschedule_task",
+            targetType: meta?.targetType || "task",
+            payload: { dueDate: tomorrowIso, newDeadline: tomorrowIso, title: meta?.targetTitle },
+          }
+        : undefined,
     };
   }
 
   // 2. Completed / Finished ("I actually completed it!", "mark complete", "finished it")
+  // Requires user confirmation before modifying saved goal/task.
   if (
     /\b(finished|completed|done with it|mark (it )?(as )?complete|checked off|i did it|all done|cross(ed)? (it )?off|already done|actually completed)\b/i.test(
       lower
     )
   ) {
+    const action = meta?.targetType === "goal" ? "complete_goal" : "complete_task";
     return {
       intent: "complete_item",
       targetId: meta?.targetId,
       targetType: meta?.targetType || "task",
       targetTitle: meta?.targetTitle,
-      replyMessage: `WAITTT! You actually completed it?! I'm proud of you, ${userName}! 🎉 Crossing '${title}' off your list right now — that's genuine momentum!`,
+      replyMessage: `WAITTT! You actually completed it?! I'm proud of you, ${userName}! 🎉 Want me to mark '${title}' as completed in your list right now? Just say 'yes'!`,
       pose: "celebrate",
-      shouldModifyDatabase: Boolean(meta?.targetId),
-      actionToExecute: meta?.targetType === "goal" ? "complete_goal" : "complete_task",
+      shouldModifyDatabase: false,
+      requiresConfirmation: Boolean(meta?.targetId),
+      actionToExecute: action,
+      pendingAction: meta?.targetId
+        ? {
+            action,
+            targetType: meta?.targetType || "task",
+            payload: { title: meta?.targetTitle },
+          }
+        : undefined,
     };
   }
 
@@ -93,12 +120,21 @@ export function parseAccountabilityIntent(
     return {
       intent: "break_task",
       targetId: meta?.targetId,
-      targetType: "task",
+      targetType: meta?.targetType || "task",
       targetTitle: meta?.targetTitle,
       proposedSteps: steps,
       replyMessage: `Let's make this way easier to start, ${userName}! How about we break '${title}' into these smaller pieces:\n\n${stepsText}\n\nWant me to add these steps to your tasks? Just say 'yes'!`,
       pose: "think",
-      shouldModifyDatabase: false, // Requires user confirmation
+      shouldModifyDatabase: false,
+      requiresConfirmation: Boolean(meta?.targetId),
+      actionToExecute: "break_task",
+      pendingAction: meta?.targetId
+        ? {
+            action: "break_task",
+            targetType: meta?.targetType || "task",
+            payload: { steps, title: meta?.targetTitle },
+          }
+        : undefined,
     };
   }
 
@@ -113,10 +149,18 @@ export function parseAccountabilityIntent(
       targetType: "goal",
       targetTitle: meta?.targetTitle,
       newDueDate: formattedDate,
-      replyMessage: `All set, ${userName}! I've adjusted the deadline for your goal '${title}'. Setting realistic timelines is smart, not a compromise.`,
+      replyMessage: `Setting realistic timelines is smart, not a compromise, ${userName}. Want me to update the deadline for your goal '${title}' to ${formattedDate}? Just say 'yes'!`,
       pose: "happy",
-      shouldModifyDatabase: Boolean(meta?.targetId),
+      shouldModifyDatabase: false,
+      requiresConfirmation: Boolean(meta?.targetId),
       actionToExecute: "adjust_goal",
+      pendingAction: meta?.targetId
+        ? {
+            action: "adjust_goal",
+            targetType: "goal",
+            payload: { newDeadline: formattedDate, title: meta?.targetTitle },
+          }
+        : undefined,
     };
   }
 
@@ -128,17 +172,26 @@ export function parseAccountabilityIntent(
   ) {
     const targetDate = resolveRelativeDueDate(lower);
     const formattedDate = targetDate.toISOString().slice(0, 10);
+    const label = lower.includes("tomorrow") ? "tomorrow" : formattedDate;
 
     return {
       intent: "reschedule_task",
       targetId: meta?.targetId,
-      targetType: "task",
+      targetType: meta?.targetType || "task",
       targetTitle: meta?.targetTitle,
       newDueDate: formattedDate,
-      replyMessage: `Got it, ${userName}! I've moved '${title}' to ${lower.includes("tomorrow") ? "tomorrow" : formattedDate}. One less thing to stress about today — take a deep breath!`,
+      replyMessage: `Totally fine to pace yourself, ${userName}. Want me to move '${title}' to ${label} for you? Just say 'yes'!`,
       pose: "curious",
-      shouldModifyDatabase: Boolean(meta?.targetId),
+      shouldModifyDatabase: false,
+      requiresConfirmation: Boolean(meta?.targetId),
       actionToExecute: "reschedule_task",
+      pendingAction: meta?.targetId
+        ? {
+            action: "reschedule_task",
+            targetType: meta?.targetType || "task",
+            payload: { dueDate: formattedDate, title: meta?.targetTitle },
+          }
+        : undefined,
     };
   }
 
@@ -154,10 +207,18 @@ export function parseAccountabilityIntent(
       targetType: meta?.targetType || "task",
       targetTitle: meta?.targetTitle,
       newPriority,
-      replyMessage: `Done! I've updated '${title}' to ${newPriority} priority. Let's focus on what truly matters most.`,
+      replyMessage: `Makes sense, ${userName}. Want me to update '${title}' to ${newPriority} priority? Just say 'yes'!`,
       pose: "happy",
-      shouldModifyDatabase: Boolean(meta?.targetId),
+      shouldModifyDatabase: false,
+      requiresConfirmation: Boolean(meta?.targetId),
       actionToExecute: "change_priority",
+      pendingAction: meta?.targetId
+        ? {
+            action: "change_priority",
+            targetType: meta?.targetType || "task",
+            payload: { priority: newPriority, title: meta?.targetTitle },
+          }
+        : undefined,
     };
   }
 
@@ -223,8 +284,8 @@ export async function executeAccountabilityAction(params: {
   payload?: Record<string, unknown>;
 }) {
   const { action, firebaseUid, targetId, payload = {} } = params;
-  const { updateTask, createTask, getTask } = await import("@/services/taskService");
-  const { updateGoal } = await import("@/services/goalService");
+  const { updateTask, createTask, getTask, listTasks } = await import("@/services/taskService");
+  const { updateGoal, getGoal } = await import("@/services/goalService");
 
   if (action === "complete_task") {
     const updated = await updateTask(targetId, firebaseUid, { status: "COMPLETED" });
@@ -238,6 +299,10 @@ export async function executeAccountabilityAction(params: {
 
   if (action === "reschedule_task") {
     const dueDate = typeof payload.dueDate === "string" ? payload.dueDate : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    if (params.targetType === "goal") {
+      const updated = await updateGoal(targetId, firebaseUid, { deadline: dueDate });
+      return { ok: true, action, goal: updated };
+    }
     const updated = await updateTask(targetId, firebaseUid, { dueDate });
     return { ok: true, action, task: updated };
   }
@@ -248,8 +313,12 @@ export async function executeAccountabilityAction(params: {
       const updated = await updateGoal(targetId, firebaseUid, { priority });
       return { ok: true, action, goal: updated };
     }
-    const updated = await updateTask(targetId, firebaseUid, {});
-    return { ok: true, action, task: updated, newPriority: priority };
+    const task = await getTask(targetId, firebaseUid);
+    if (task?.goalId) {
+      const updatedGoal = await updateGoal(task.goalId, firebaseUid, { priority });
+      return { ok: true, action, task, goal: updatedGoal, newPriority: priority };
+    }
+    return { ok: true, action, task, newPriority: priority };
   }
 
   if (action === "adjust_goal") {
@@ -267,24 +336,59 @@ export async function executeAccountabilityAction(params: {
       ? payload.steps.filter((s: unknown) => typeof s === "string" && s.trim().length > 0).slice(0, 5)
       : generateDefaultSubSteps(String(payload.title || "Task"));
 
-    const parentTask = await getTask(targetId, firebaseUid);
-    if (!parentTask) {
-      return { ok: false, error: "Parent task not found" };
+    let parentTitle = String(payload.title || "Task");
+    let dueDate: string | null = null;
+    let goalId: string | null = null;
+
+    if (params.targetType === "goal") {
+      const parentGoal = await getGoal(targetId, firebaseUid);
+      if (!parentGoal) {
+        return { ok: false, error: "Parent goal not found" };
+      }
+      parentTitle = parentGoal.title;
+      dueDate = parentGoal.deadline ?? null;
+      goalId = parentGoal.id;
+    } else {
+      const parentTask = await getTask(targetId, firebaseUid);
+      if (parentTask) {
+        parentTitle = parentTask.title;
+        dueDate = parentTask.dueDate ?? null;
+        goalId = parentTask.goalId ?? null;
+      } else {
+        const parentGoal = await getGoal(targetId, firebaseUid);
+        if (!parentGoal) {
+          return { ok: false, error: "Parent task or goal not found" };
+        }
+        parentTitle = parentGoal.title;
+        dueDate = parentGoal.deadline ?? null;
+        goalId = parentGoal.id;
+      }
     }
 
+    // Deduplicate against existing tasks so we never create duplicates
+    const existingTasks = await listTasks(firebaseUid);
+    const existingTitles = new Set(existingTasks.map((t) => t.title.trim().toLowerCase()));
+
     const createdTasks = [];
+    let skippedDuplicates = 0;
     for (const stepTitle of steps) {
+      const trimmed = stepTitle.trim();
+      if (existingTitles.has(trimmed.toLowerCase())) {
+        skippedDuplicates++;
+        continue;
+      }
       const subTask = await createTask({
         firebaseUid,
-        title: stepTitle.trim(),
-        description: `Sub-task of: ${parentTask.title}`,
-        dueDate: parentTask.dueDate ?? null,
-        goalId: parentTask.goalId ?? null,
+        title: trimmed,
+        description: `Sub-task of: ${parentTitle}`,
+        dueDate,
+        goalId,
       });
+      existingTitles.add(trimmed.toLowerCase());
       createdTasks.push(subTask);
     }
 
-    return { ok: true, action, createdTasks, parentTaskId: targetId };
+    return { ok: true, action, createdTasks, skippedDuplicates, parentTargetId: targetId };
   }
 
   return { ok: true, action };

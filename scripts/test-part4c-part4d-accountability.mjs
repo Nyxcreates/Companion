@@ -428,7 +428,7 @@ console.log("\n[4D-TEST 8] User confirms proposed subtasks ('yes please do it')"
   console.log(`✓ 4D-Test 8 passed — User confirmation detected to execute action.`);
 }
 
-// [4D-TEST 9] Natural response: "Reschedule to tomorrow"
+// [4D-TEST 9] Natural response: "Reschedule to tomorrow" (requires confirmation)
 console.log("\n[4D-TEST 9] User requests reschedule ('reschedule this to tomorrow')");
 {
   const analysis = parseAccountabilityIntent("reschedule this to tomorrow please", {
@@ -439,14 +439,17 @@ console.log("\n[4D-TEST 9] User requests reschedule ('reschedule this to tomorro
   });
 
   assert.strictEqual(analysis.intent, "reschedule_task");
-  assert.strictEqual(analysis.shouldModifyDatabase, true);
+  assert.strictEqual(analysis.shouldModifyDatabase, false, "Must require user confirmation before modifying DB");
+  assert.strictEqual(analysis.requiresConfirmation, true);
   assert.strictEqual(analysis.actionToExecute, "reschedule_task");
+  assert.strictEqual(analysis.pendingAction?.action, "reschedule_task");
   assert(typeof analysis.newDueDate === "string");
-  assert(analysis.replyMessage.includes("moved 'Submit Tax Forms' to tomorrow"));
-  console.log(`✓ 4D-Test 9 passed — Reschedule parsed and targeted to tomorrow.`);
+  assert(analysis.replyMessage.includes("move 'Submit Tax Forms' to tomorrow"));
+  assert(analysis.replyMessage.includes("Just say 'yes'"));
+  console.log(`✓ 4D-Test 9 passed — Reschedule parsed and requires confirmation.`);
 }
 
-// [4D-TEST 10] Natural response: "I completed it!" / "Mark complete"
+// [4D-TEST 10] Natural response: "I completed it!" / "Mark complete" (requires confirmation)
 console.log("\n[4D-TEST 10] User announces completion ('WAITTT! Actually completed it!')");
 {
   const analysis = parseAccountabilityIntent("WAITTT! I actually completed it!!", {
@@ -457,17 +460,19 @@ console.log("\n[4D-TEST 10] User announces completion ('WAITTT! Actually complet
   });
 
   assert.strictEqual(analysis.intent, "complete_item");
-  assert.strictEqual(analysis.shouldModifyDatabase, true);
+  assert.strictEqual(analysis.shouldModifyDatabase, false, "Must require user confirmation before modifying DB");
+  assert.strictEqual(analysis.requiresConfirmation, true);
   assert.strictEqual(analysis.actionToExecute, "complete_task");
+  assert.strictEqual(analysis.pendingAction?.action, "complete_task");
   assert.strictEqual(analysis.pose, "celebrate");
   assert(
     analysis.replyMessage.includes("WAITTT! You actually completed it?!"),
     "Must celebrate completion enthusiastically"
   );
-  console.log(`✓ 4D-Test 10 passed — Completion celebrated and marked for execution.`);
+  console.log(`✓ 4D-Test 10 passed — Completion celebrated and queued for confirmation.`);
 }
 
-// [4D-TEST 11] Natural response: "Make this low priority"
+// [4D-TEST 11] Natural response: "Make this low priority" (requires confirmation)
 console.log("\n[4D-TEST 11] User changes priority ('make this low priority for now')");
 {
   const analysis = parseAccountabilityIntent("make this low priority for now", {
@@ -479,13 +484,15 @@ console.log("\n[4D-TEST 11] User changes priority ('make this low priority for n
 
   assert.strictEqual(analysis.intent, "change_priority");
   assert.strictEqual(analysis.newPriority, "LOW");
-  assert.strictEqual(analysis.shouldModifyDatabase, true);
+  assert.strictEqual(analysis.shouldModifyDatabase, false, "Must require user confirmation before modifying DB");
+  assert.strictEqual(analysis.requiresConfirmation, true);
   assert.strictEqual(analysis.actionToExecute, "change_priority");
-  assert(analysis.replyMessage.includes("updated 'Read Article' to LOW priority"));
-  console.log(`✓ 4D-Test 11 passed — Priority change recognized and updated.`);
+  assert.strictEqual(analysis.pendingAction?.payload?.priority, "LOW");
+  assert(analysis.replyMessage.includes("update 'Read Article' to LOW priority"));
+  console.log(`✓ 4D-Test 11 passed — Priority change recognized and queued for confirmation.`);
 }
 
-// [4D-TEST 12] Natural response: "Extend goal deadline to next week"
+// [4D-TEST 12] Natural response: "Extend goal deadline to next week" (requires confirmation)
 console.log("\n[4D-TEST 12] User adjusts goal ('extend the deadline to next week')");
 {
   const analysis = parseAccountabilityIntent("extend the deadline to next week", {
@@ -496,11 +503,13 @@ console.log("\n[4D-TEST 12] User adjusts goal ('extend the deadline to next week
   });
 
   assert.strictEqual(analysis.intent, "adjust_goal");
-  assert.strictEqual(analysis.shouldModifyDatabase, true);
+  assert.strictEqual(analysis.shouldModifyDatabase, false, "Must require user confirmation before modifying DB");
+  assert.strictEqual(analysis.requiresConfirmation, true);
   assert.strictEqual(analysis.actionToExecute, "adjust_goal");
+  assert.strictEqual(analysis.pendingAction?.action, "adjust_goal");
   assert(typeof analysis.newDueDate === "string");
-  assert(analysis.replyMessage.includes("adjusted the deadline for your goal 'GRE Prep'"));
-  console.log(`✓ 4D-Test 12 passed — Goal deadline adjustment handled safely.`);
+  assert(analysis.replyMessage.includes("update the deadline for your goal 'GRE Prep'"));
+  console.log(`✓ 4D-Test 12 passed — Goal deadline adjustment queued for confirmation.`);
 }
 
 // [4D-TEST 13] Natural response: Explaining blockers ("I don't know where to start")
@@ -523,6 +532,57 @@ console.log("\n[4D-TEST 13] User explains blocker ('I'm stuck and don't know whe
   console.log(`✓ 4D-Test 13 passed — Blocker explanation handled with low-friction guidance.`);
 }
 
+// [4D-TEST 14] Complete flow: neglected goal detected -> rest response -> approved action
+console.log("\n[4D-TEST 14] Complete flow: neglected goal -> rest/overload -> approved adjustment");
+{
+  // Step 1: Detect neglected goal
+  const neglectedGoal = {
+    id: "g_capstone",
+    title: "Capstone Project",
+    priority: "HIGH",
+    daysSinceUpdated: 7,
+    avoidCount: 1,
+    progressPercent: 25,
+  };
+  const ctx = createBaseContext({
+    currentHour: 15,
+    neglectedGoals: [neglectedGoal],
+    highPriorityNeglectedGoals: [neglectedGoal],
+  });
+
+  const decision = decideNikkiNudge(ctx);
+  assert.strictEqual(decision.shouldSpeak, true);
+  assert.strictEqual(decision.trigger, "goal_neglected");
+
+  // Step 2: Nikki initiates conversation referencing the goal
+  const opening = getPersonaFallbackMessage(ctx, decision);
+  assert(opening.includes("Capstone Project"));
+
+  // Step 3: User responds with overload ("I have too much college work")
+  const restReply = parseAccountabilityIntent("I have too much college work", {
+    targetId: neglectedGoal.id,
+    targetTitle: neglectedGoal.title,
+    targetType: "goal",
+    userName: "Nishtha",
+  });
+  assert.strictEqual(restReply.intent, "rest_and_fatigue");
+  assert.strictEqual(restReply.shouldModifyDatabase, false);
+  assert.strictEqual(restReply.pendingAction?.action, "adjust_goal");
+
+  // Step 4: User approves the suggested tomorrow adjustment ("Yes, sounds good")
+  const confirmReply = parseAccountabilityIntent("Yes, sounds good", {
+    targetId: neglectedGoal.id,
+    targetTitle: neglectedGoal.title,
+    targetType: "goal",
+    userName: "Nishtha",
+  });
+  assert.strictEqual(confirmReply.intent, "confirm_action");
+  assert.strictEqual(confirmReply.shouldModifyDatabase, true);
+  assert.strictEqual(confirmReply.actionToExecute, "confirm_pending");
+
+  console.log("✓ 4D-Test 14 passed — Complete neglected-goal -> rest -> confirmation flow verified.");
+}
+
 console.log("\n==========================================================================");
-console.log("ALL PART 4C & PART 4D TESTS PASSED! (13/13)");
+console.log("ALL PART 4C & PART 4D TESTS PASSED! (15/15)");
 console.log("==========================================================================");
