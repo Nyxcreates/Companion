@@ -10,6 +10,7 @@ import { GoalsStep } from "./steps/GoalsStep";
 import { RhythmStep } from "./steps/RhythmStep";
 import { HelpStep } from "./steps/HelpStep";
 import { SummaryStep } from "./steps/SummaryStep";
+import { useAuth } from "@/context/AuthContext";
 import { useProfile } from "@/context/ProfileContext";
 import { useToast } from "@/context/ToastContext";
 
@@ -39,6 +40,7 @@ const TOTAL_STEPS = 6;
 /** Six-step onboarding: name, companion name, goals, daily rhythm, help preferences, summary. Submits once, at the end, via ProfileContext.updateProfile. */
 export function OnboardingWizard() {
   const router = useRouter();
+  const { signOut } = useAuth();
   const { updateProfile } = useProfile();
   const { showToast } = useToast();
 
@@ -103,6 +105,10 @@ export function OnboardingWizard() {
               value={draft.displayName}
               onChange={(v) => updateDraft("displayName", v)}
               onNext={() => setStep(1)}
+              onBack={async () => {
+                await signOut();
+                router.push("/");
+              }}
             />
           )}
           {step === 1 && (
