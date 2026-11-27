@@ -215,3 +215,58 @@ test("decideNikkiNudge triggers morning_plan at 08:00, evening_checkin at 20:00,
   const quiet = decideNikkiNudge(makeBaseContext({ isQuietHours: true }));
   assert.equal(quiet.shouldSpeak, false);
 });
+
+test("decideNikkiNudge respects notification pause and resumes when pause is cleared", () => {
+  const paused = decideNikkiNudge(makeBaseContext({ isPaused: true }));
+  assert.equal(paused.shouldSpeak, false);
+
+  const resumed = decideNikkiNudge(makeBaseContext({ isPaused: false }));
+  assert.equal(resumed.shouldSpeak, true);
+  assert.equal(resumed.trigger, "morning_plan");
+});
+
+test("decideNikkiNudge handles sleep reminder snooze and daily acknowledgement", () => {
+  const now = Date.now();
+  const baseSleep = {
+    localTime: "23:15",
+    currentHour: 23,
+    totalMinutes: 23 * 60 + 15,
+    usualBedtime: "23:00",
+    sleepReminderEnabled: true,
+    sleepReminderSnoozeMinutes: 25,
+    isQuietHours: true,
+  };
+
+  // Due when past bedtime and not snoozed/dismissed
+  const due = decideNikkiNudge(makeBaseContext(baseSleep));
+  assert.equal(due.shouldSpeak, true);
+  assert.equal(due.trigger, "sleep_reminder");
+
+  // Suppressed while snooze is in the future
+  const snoozed = decideNikkiNudge(
+    makeBaseContext({
+      ...baseSleep,
+      sleepSnoozeUntil: new Date(now + 20 * 60 * 1000).toISOString(),
+    })
+  );
+  assert.equal(snoozed.shouldSpeak, false);
+
+  // Re-triggers after snooze expires
+  const snoozeExpired = decideNikkiNudge(
+    makeBaseContext({
+      ...baseSleep,
+      sleepSnoozeUntil: new Date(now - 60 * 1000).toISOString(),
+    })
+  );
+  assert.equal(snoozeExpired.shouldSpeak, true);
+  assert.equal(snoozeExpired.trigger, "sleep_reminder");
+
+  // Suppressed for the rest of the day once acknowledged ("I'm going to sleep")
+  const dismissed = decideNikkiNudge(
+    makeBaseContext({
+      ...baseSleep,
+      sleepDismissedForDate: "2026-11-27",
+    })
+  );
+  assert.equal(dismissed.shouldSpeak, false);
+});
