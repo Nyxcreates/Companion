@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { generateVAPIDKeys } from "web-push";
-import { verifyCronBearerToken } from "../src/lib/api/verifyCronAuth.ts";
+import { verifyCronAuth, verifyCronBearerToken } from "../src/lib/api/verifyCronAuth.ts";
 import {
   claimNotificationIdempotency,
   NotificationIdempotencyModel,
@@ -12,6 +12,7 @@ import {
   validateVapidKeyPair,
   getVapidDiagnostics,
 } from "../src/lib/vapidKeyValidation.ts";
+import { decideNikkiNudge } from "../src/lib/nikki/decide.ts";
 
 test("vercel.json does not contain incompatible Hobby cron schedules", () => {
   const raw = fs.readFileSync(path.join(process.cwd(), "vercel.json"), "utf8");
@@ -109,7 +110,108 @@ test("claimNotificationIdempotency allows first claim and blocks concurrent/dupl
       60_000
     );
     assert.equal(otherKey, true);
+
+    // Concurrent hydration bucket claims only succeed once
+    const [water1, water2] = await Promise.all([
+      claimNotificationIdempotency("uid1:water:12345", "uid1", "proactive", 60_000),
+      claimNotificationIdempotency("uid1:water:12345", "uid1", "proactive", 60_000),
+    ]);
+    assert.equal(water1, true);
+    assert.equal(water2, false);
   } finally {
     NotificationIdempotencyModel.create = originalCreate;
   }
+});
+
+test("verifyCronAuth rejects missing or invalid Authorization headers and accepts valid Bearer CRON_SECRET", () => {
+  const origSecret = process.env.CRON_SECRET;
+  process.env.CRON_SECRET = "test-cron-secret-value";
+  try {
+    assert.equal(verifyCronAuth({ headers: new Headers() }), false);
+    assert.equal(
+      verifyCronAuth({ headers: new Headers({ authorization: "Bearer wrong-secret" }) }),
+      false
+    );
+    assert.equal(
+      verifyCronAuth({ headers: new Headers({ authorization: "Bearer test-cron-secret-value" }) }),
+      true
+    );
+  } finally {
+    if (origSecret === undefined) delete process.env.CRON_SECRET;
+    else process.env.CRON_SECRET = origSecret;
+  }
+});
+
+function makeBaseContext(overrides = {}) {
+  return {
+    firebaseUid: "user-1",
+    userName: "Nishtha",
+    companionName: "Nikki",
+    timezone: "Asia/Kolkata",
+    localDate: "2026-11-27",
+    localTime: "08:05",
+    currentHour: 8,
+    totalMinutes: 8 * 60 + 5,
+    usualWakeTime: "07:30",
+    usualBedtime: "23:00",
+    proactiveEnabled: true,
+    isPaused: false,
+    isQuietHours: false,
+    quietHoursStart: "22:30",
+    quietHoursEnd: "07:00",
+    morningCheckInEnabled: true,
+    morningCheckInTime: "08:00",
+    eveningCheckInEnabled: true,
+    eveningCheckInTime: "20:00",
+    checkInFrequency: "balanced",
+    strictness: "playful",
+    consecutiveIgnoredOrDismissedNudges: 0,
+    nudgesSentTodayCount: 0,
+    lastNudge: null,
+    isFocusSessionJustFinished: false,
+    lastFocusSession: null,
+    approachingDeadlineTasks: [],
+    missedActivities: [],
+    unstartedStartedItems: [],
+    minutesSinceLastUserMessage: 60,
+    minutesSinceLastSeen: 120,
+    totalPendingTasksCount: 1,
+    scheduleItems: [{ title: "Deep Work", start: "09:00", end: "10:00" }],
+    incompleteTasks: [],
+    hydrationCountToday: 1,
+    isFirstOpenOfDay: false,
+    hasScheduleToday: true,
+    completedActivitiesCountToday: 0,
+    completedTasksCountToday: 0,
+    isReturningAfterAbsence: false,
+    importantUnfinishedTasks: [],
+    goalsMakingGoodProgress: [],
+    neglectedGoals: [],
+    overdueTasks: [],
+    staleTasks: [],
+    repeatedlyPostponedTasks: [],
+    isLongContinuousSession: false,
+    breakCountToday: 0,
+    recentMoods: [],
+    ...overrides,
+  };
+}
+
+test("decideNikkiNudge triggers morning_plan at 08:00, evening_checkin at 20:00, and respects quiet hours", () => {
+  const morning = decideNikkiNudge(makeBaseContext({ currentHour: 8, totalMinutes: 8 * 60 + 5 }));
+  assert.equal(morning.shouldSpeak, true);
+  assert.equal(morning.trigger, "morning_plan");
+
+  const evening = decideNikkiNudge(
+    makeBaseContext({
+      localTime: "20:05",
+      currentHour: 20,
+      totalMinutes: 20 * 60 + 5,
+    })
+  );
+  assert.equal(evening.shouldSpeak, true);
+  assert.equal(evening.trigger, "evening_checkin");
+
+  const quiet = decideNikkiNudge(makeBaseContext({ isQuietHours: true }));
+  assert.equal(quiet.shouldSpeak, false);
 });

@@ -10,6 +10,7 @@ import { dispatchDueBreaks } from "@/services/breakSessionService";
 import { buildNikkiContext } from "@/lib/nikki/context";
 import { decideNikkiNudge } from "@/lib/nikki/decide";
 import { speakNikkiNudge } from "@/lib/nikki/speak";
+import { resolveUserTimezone } from "@/lib/time/currentTime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
         }
 
         evaluatedUsers++;
-        const userTimezone = userProfile?.timezone || "UTC";
+        const userTimezone = resolveUserTimezone(null, userProfile?.timezone);
 
         const { newNotificationsCount } = await evaluateProactiveContext(
           uid,

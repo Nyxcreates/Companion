@@ -17,6 +17,13 @@ import { sendPushToUser } from "@/lib/pushService";
 import { claimNotificationIdempotency } from "@/models/NotificationIdempotency";
 import type { NotificationItem, NotificationPreferences, CheckInTrigger } from "@/types/notification";
 
+function parseTimeToMinutes(timeStr: string | null | undefined, fallbackMinutes: number): number {
+  if (!timeStr) return fallbackMinutes;
+  const [h, m] = timeStr.split(":").map(Number);
+  if (!Number.isFinite(h)) return fallbackMinutes;
+  return h * 60 + (Number.isFinite(m) ? m : 0);
+}
+
 export async function createNotification(data: {
   firebaseUid: string;
   category: NotificationCategory;
@@ -619,8 +626,15 @@ export async function evaluateProactiveContext(
     }
   }
 
-    // E. Morning Overview (06:00 to 11:30)
-    if (localHour >= 6 && localHour < 12 && !activeCheckIn && !inQuietHours) {
+    // E. Morning Overview (starts at user's preferred morningCheckInTime, default 08:00, through 12:00)
+    const morningStartMins = parseTimeToMinutes(prefs.morningCheckInTime, 8 * 60);
+    if (
+      prefs.morningCheckInEnabled !== false &&
+      currentMinutes >= morningStartMins &&
+      localHour < 12 &&
+      !activeCheckIn &&
+      !inQuietHours
+    ) {
       const morningNotif = await NotificationModel.findOne({
         firebaseUid,
         category: "timetable_reminder",
@@ -664,8 +678,15 @@ export async function evaluateProactiveContext(
       }
     }
 
-    // F. Evening Reflection (18:00 to 22:30)
-    if (localHour >= 18 && localHour < 23 && !activeCheckIn && !inQuietHours) {
+    // F. Evening Reflection (starts at user's preferred eveningCheckInTime, default 20:00, through 23:00)
+    const eveningStartMins = parseTimeToMinutes(prefs.eveningCheckInTime, 20 * 60);
+    if (
+      prefs.eveningCheckInEnabled !== false &&
+      currentMinutes >= eveningStartMins &&
+      localHour < 23 &&
+      !activeCheckIn &&
+      !inQuietHours
+    ) {
       const eveningNotif = await NotificationModel.findOne({
         firebaseUid,
         category: "nikki_supportive",
@@ -837,7 +858,7 @@ export async function evaluateProactiveContext(
   }
 
   // 3. Focus Session Reminders: Active focus session > breakIntervalMinutes
-  if (isCatEnabled("focus_reminder") || isCatEnabled("break_reminder")) {
+  if ((isCatEnabled("focus_reminder") || isCatEnabled("break_reminder")) && !inQuietHours) {
     const activeSession = await FocusSessionModel.findOne({
       firebaseUid,
       status: "ACTIVE",
@@ -854,7 +875,8 @@ export async function evaluateProactiveContext(
           createdAt: { $gte: new Date(now.getTime() - 30 * 60 * 1000) },
         });
 
-        if (!recentNotif) {
+        const focusBreakBucket = Math.floor(now.getTime() / (30 * 60 * 1000));
+        if (!recentNotif && await claimNotificationIdempotency(`${firebaseUid}:focus_break:${String(activeSession._id)}:${focusBreakBucket}`, firebaseUid, "proactive", 30 * 60 * 1000)) {
           await createNotification({
             firebaseUid,
             category: "break_reminder",
@@ -862,6 +884,7 @@ export async function evaluateProactiveContext(
             body: `You've been in deep focus for over ${elapsedMinutes} minutes. Give your eyes and mind a short 5-minute break!`,
             actionUrl: "/focus",
             actionLabel: "Take a Break",
+            userTimezone,
           });
           newNotificationsCount++;
 
@@ -887,7 +910,7 @@ export async function evaluateProactiveContext(
   }
 
   // 4. Mood-Aware Check-in: Inspect recent emotion
-  if (isCatEnabled("mood_checkin") && prefs.proactiveEnabled) {
+  if (isCatEnabled("mood_checkin") && prefs.proactiveEnabled && !inQuietHours) {
     const recentEmotion = await EmotionModel.findOne({
       firebaseUid,
       createdAt: { $gte: new Date(now.getTime() - 4 * 60 * 60 * 1000) },
@@ -905,7 +928,7 @@ export async function evaluateProactiveContext(
           createdAt: { $gte: new Date(now.getTime() - 5 * 60 * 60 * 1000) },
         });
 
-        if (!recentNotif) {
+        if (!recentNotif && await claimNotificationIdempotency(`${firebaseUid}:mood:${String(recentEmotion._id)}`, firebaseUid, "proactive", 5 * 60 * 60 * 1000)) {
           await createNotification({
             firebaseUid,
             category: "mood_checkin",
@@ -913,6 +936,7 @@ export async function evaluateProactiveContext(
             body: `Hey, things felt a bit ${e} earlier. Remember you don't have to carry everything all at once.`,
             actionUrl: "/dashboard",
             actionLabel: "Talk to Nikki",
+            userTimezone,
             metadata: { emotion: e },
           });
           newNotificationsCount++;
@@ -962,19 +986,7 @@ export async function evaluateProactiveContext(
   }
 
   // 5. Late Night / Sleep Reminder
-  if (isCatEnabled("sleep_reminder")) {
-    let localHour = 0;
-    try {
-      const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone: userTimezone || "UTC",
-        hour: "numeric",
-        hour12: false,
-      }).formatToParts(now);
-      localHour = parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10);
-    } catch {
-      localHour = now.getUTCHours();
-    }
-
+  if (isCatEnabled("sleep_reminder") && !inQuietHours) {
     if (localHour >= 23 || localHour < 4) {
       const recentSleepNotif = await NotificationModel.findOne({
         firebaseUid,
@@ -982,7 +994,7 @@ export async function evaluateProactiveContext(
         createdAt: { $gte: new Date(now.getTime() - 8 * 60 * 60 * 1000) },
       });
 
-      if (!recentSleepNotif) {
+      if (!recentSleepNotif && await claimNotificationIdempotency(`${firebaseUid}:sleep_reminder:${todayStr}`, firebaseUid, "proactive", 8 * 60 * 60 * 1000)) {
         await createNotification({
           firebaseUid,
           category: "sleep_reminder",
@@ -990,6 +1002,7 @@ export async function evaluateProactiveContext(
           body: "It's getting late. Don't forget that a good night's rest is your secret superpower.",
           actionUrl: "/dashboard",
           actionLabel: "Wind Down",
+          userTimezone,
         });
         newNotificationsCount++;
 
@@ -1026,7 +1039,8 @@ export async function evaluateProactiveContext(
       createdAt: { $gte: new Date(now.getTime() - effectiveWaterIntervalMs) },
     });
 
-    if (!recentWaterNotif) {
+    const waterBucket = Math.floor(now.getTime() / effectiveWaterIntervalMs);
+    if (!recentWaterNotif && await claimNotificationIdempotency(`${firebaseUid}:water:${waterBucket}`, firebaseUid, "proactive", effectiveWaterIntervalMs)) {
       await createNotification({
         firebaseUid,
         category: "wellbeing_water_food",
@@ -1034,6 +1048,7 @@ export async function evaluateProactiveContext(
         body: "Have a glass of water to keep your focus sharp and your body refreshed.",
         actionUrl: "/dashboard",
         actionLabel: "I Drank Water",
+        userTimezone,
       });
       newNotificationsCount++;
 
