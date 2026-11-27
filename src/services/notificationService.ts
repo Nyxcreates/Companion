@@ -109,6 +109,14 @@ function docToPreferences(doc: NotificationPreferenceDocument): NotificationPref
     pausedUntil: doc.pausedUntil ? doc.pausedUntil.toISOString() : null,
     strictness: doc.strictness ?? "playful",
     lastSeenAt: doc.lastSeenAt ? doc.lastSeenAt.toISOString() : null,
+    sleepReminderEnabled: doc.sleepReminderEnabled ?? true,
+    sleepReminderSnoozeMinutes: doc.sleepReminderSnoozeMinutes ?? 25,
+    sleepSnoozeUntil: doc.sleepSnoozeUntil ? doc.sleepSnoozeUntil.toISOString() : null,
+    sleepDismissedForDate: doc.sleepDismissedForDate ?? null,
+    studyRemindersEnabled: doc.studyRemindersEnabled ?? true,
+    hobbyRemindersEnabled: doc.hobbyRemindersEnabled ?? true,
+    soundEnabled: doc.soundEnabled ?? true,
+    floatingVisible: doc.floatingVisible ?? true,
     learnedWeights: {
       waterDismissCount: doc.learnedWeights?.waterDismissCount ?? 0,
       waterAcceptCount: doc.learnedWeights?.waterAcceptCount ?? 0,
@@ -159,6 +167,36 @@ export async function updatePreferences(
   }
   if (updates.lastSeenAt !== undefined) {
     doc.lastSeenAt = updates.lastSeenAt ? new Date(updates.lastSeenAt) : null;
+  }
+  if (updates.sleepReminderEnabled !== undefined) {
+    doc.sleepReminderEnabled = Boolean(updates.sleepReminderEnabled);
+    if (!doc.sleepReminderEnabled) {
+      doc.sleepSnoozeUntil = null;
+    }
+  }
+  if (updates.sleepReminderSnoozeMinutes !== undefined) {
+    const mins = Number(updates.sleepReminderSnoozeMinutes);
+    if (Number.isFinite(mins)) {
+      doc.sleepReminderSnoozeMinutes = Math.max(5, Math.min(120, Math.round(mins)));
+    }
+  }
+  if (updates.sleepSnoozeUntil !== undefined) {
+    doc.sleepSnoozeUntil = updates.sleepSnoozeUntil ? new Date(updates.sleepSnoozeUntil) : null;
+  }
+  if (updates.sleepDismissedForDate !== undefined) {
+    doc.sleepDismissedForDate = updates.sleepDismissedForDate ?? null;
+  }
+  if (updates.studyRemindersEnabled !== undefined) {
+    doc.studyRemindersEnabled = Boolean(updates.studyRemindersEnabled);
+  }
+  if (updates.hobbyRemindersEnabled !== undefined) {
+    doc.hobbyRemindersEnabled = Boolean(updates.hobbyRemindersEnabled);
+  }
+  if (updates.soundEnabled !== undefined) {
+    doc.soundEnabled = Boolean(updates.soundEnabled);
+  }
+  if (updates.floatingVisible !== undefined) {
+    doc.floatingVisible = Boolean(updates.floatingVisible);
   }
   if (updates.categoriesEnabled !== undefined) {
     doc.categoriesEnabled = updates.categoriesEnabled as any;

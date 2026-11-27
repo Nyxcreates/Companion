@@ -20,6 +20,7 @@ import {
   Activity,
 } from "lucide-react";
 import { useNotifications } from "@/context/NotificationContext";
+import { useProfile } from "@/context/ProfileContext";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { NOTIFICATION_CATEGORIES, type NotificationCategory } from "@/lib/notifications/categories";
@@ -117,11 +118,26 @@ export function NotificationSettingsSection() {
   const [floatingEnabled, setFloatingEnabled] = useState(false);
   const [usageTrackingEnabled, setUsageTrackingEnabled] = useState(false);
 
+  // Electron desktop companion settings
+  const { profile, updateProfile } = useProfile();
+  const [isDesktop, setIsDesktop] = useState(false);
+  const [desktopAutoLaunch, setDesktopAutoLaunch] = useState(false);
+  const [desktopFloatingVisible, setDesktopFloatingVisible] = useState(true);
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       const bridge = (window as unknown as { CompanionNative?: CompanionNativeInterface }).CompanionNative;
       if (bridge && typeof bridge.isNativeApp === "function") {
         setIsNativeApp(true);
+      }
+      if (window.companionDesktop?.isDesktop) {
+        setIsDesktop(true);
+        window.companionDesktop.getDesktopSettings?.().then((s) => {
+          if (s) {
+            setDesktopAutoLaunch(Boolean(s.autoLaunch));
+            setDesktopFloatingVisible(Boolean(s.floatingVisible));
+          }
+        }).catch(() => {});
       }
     }
   }, []);
@@ -608,6 +624,136 @@ export function NotificationSettingsSection() {
             }
             className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs text-white focus:border-cyan-400 focus:outline-none"
           />
+        </div>
+
+        {/* Floating Nikki & Sleep / Study / Hobby / Sound Settings */}
+        <div className="sm:col-span-2 rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+          <div className="flex items-center gap-2">
+            <Moon className="h-4 w-4 text-indigo-400" />
+            <h4 className="text-sm font-semibold text-white">Floating Nikki, Sleep &amp; Reminder Preferences</h4>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Sleep Reminder Enable */}
+            <label className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 cursor-pointer">
+              <span className="text-xs font-medium text-white">Sleep Reminders</span>
+              <input
+                type="checkbox"
+                checked={preferences.sleepReminderEnabled !== false}
+                onChange={(e) => updatePreferences({ sleepReminderEnabled: e.target.checked })}
+                className="rounded border-white/20 bg-white/10 text-cyan-400 focus:ring-0"
+              />
+            </label>
+
+            {/* Study Reminders Enable */}
+            <label className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 cursor-pointer">
+              <span className="text-xs font-medium text-white">Study Reminders</span>
+              <input
+                type="checkbox"
+                checked={preferences.studyRemindersEnabled !== false}
+                onChange={(e) => updatePreferences({ studyRemindersEnabled: e.target.checked })}
+                className="rounded border-white/20 bg-white/10 text-cyan-400 focus:ring-0"
+              />
+            </label>
+
+            {/* Hobby Reminders Enable */}
+            <label className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 cursor-pointer">
+              <span className="text-xs font-medium text-white">Hobby &amp; Personal Reminders</span>
+              <input
+                type="checkbox"
+                checked={preferences.hobbyRemindersEnabled !== false}
+                onChange={(e) => updatePreferences({ hobbyRemindersEnabled: e.target.checked })}
+                className="rounded border-white/20 bg-white/10 text-cyan-400 focus:ring-0"
+              />
+            </label>
+
+            {/* Sound / Voice Preferences */}
+            <label className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 cursor-pointer">
+              <span className="text-xs font-medium text-white">Sound &amp; Voice Chimes</span>
+              <input
+                type="checkbox"
+                checked={preferences.soundEnabled !== false}
+                onChange={(e) => updatePreferences({ soundEnabled: e.target.checked })}
+                className="rounded border-white/20 bg-white/10 text-cyan-400 focus:ring-0"
+              />
+            </label>
+
+            {/* Preferred Bedtime */}
+            <div>
+              <label className="block text-xs font-medium text-ink-primary mb-1">
+                Preferred Bedtime
+              </label>
+              <input
+                type="time"
+                value={profile?.dailyRhythm?.sleepTime ?? "23:00"}
+                onChange={(e) => {
+                  const sleepTime = e.target.value;
+                  updateProfile({
+                    dailyRhythm: {
+                      wakeTime: profile?.dailyRhythm?.wakeTime ?? "07:30",
+                      sleepTime,
+                      focusPeriods: profile?.dailyRhythm?.focusPeriods ?? [],
+                      commitments: profile?.dailyRhythm?.commitments ?? null,
+                    },
+                  });
+                }}
+                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs text-white focus:border-cyan-400 focus:outline-none"
+              />
+            </div>
+
+            {/* Sleep Snooze Duration */}
+            <div>
+              <label className="block text-xs font-medium text-ink-primary mb-1">
+                Sleep Snooze Duration (Minutes)
+              </label>
+              <input
+                type="number"
+                min={5}
+                max={120}
+                step={5}
+                value={preferences.sleepReminderSnoozeMinutes ?? 25}
+                onChange={(e) =>
+                  updatePreferences({ sleepReminderSnoozeMinutes: Number(e.target.value) })
+                }
+                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs text-white focus:border-cyan-400 focus:outline-none"
+              />
+            </div>
+
+            {/* Show/Hide Floating Nikki */}
+            <label className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 cursor-pointer">
+              <span className="text-xs font-medium text-white">Show Floating Nikki</span>
+              <input
+                type="checkbox"
+                checked={isDesktop ? desktopFloatingVisible : preferences.floatingVisible !== false}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  updatePreferences({ floatingVisible: next });
+                  if (isDesktop && window.companionDesktop?.setDesktopSettings) {
+                    setDesktopFloatingVisible(next);
+                    window.companionDesktop.setDesktopSettings({ floatingVisible: next }).catch(() => {});
+                  }
+                }}
+                className="rounded border-white/20 bg-white/10 text-cyan-400 focus:ring-0"
+              />
+            </label>
+
+            {/* Launch on Windows Startup (Electron Desktop only) */}
+            {isDesktop && (
+              <label className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 cursor-pointer">
+                <span className="text-xs font-medium text-white">Launch on Windows Startup</span>
+                <input
+                  type="checkbox"
+                  checked={desktopAutoLaunch}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    setDesktopAutoLaunch(next);
+                    window.companionDesktop?.setDesktopSettings?.({ autoLaunch: next }).catch(() => {});
+                  }}
+                  className="rounded border-white/20 bg-white/10 text-cyan-400 focus:ring-0"
+                />
+              </label>
+            )}
+          </div>
         </div>
 
         <div className="sm:col-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-4 flex flex-col gap-3">

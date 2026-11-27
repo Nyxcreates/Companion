@@ -43,17 +43,49 @@ export function CompanionWorkspace() {
     loadConversations();
   }, [loadConversations]);
 
-  // Auto-open the most recent conversation once, on first load — this
-  // is what makes refreshing the page continue where you left off,
-  // instead of showing an empty chat even though the conversation
-  // still exists in MongoDB.
+  // Auto-open a specific conversation from ?conversationId=... (e.g. Talk to Nikki),
+  // or fall back to the most recent conversation once on first load.
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const targetId = params.get("conversationId");
+      if (targetId) {
+        setActiveConversationId(targetId);
+        setIsNewConversationPending(false);
+        setHasAutoSelected(true);
+        try {
+          params.delete("conversationId");
+          const qs = params.toString();
+          const cleanUrl = window.location.pathname + (qs ? `?${qs}` : "");
+          window.history.replaceState({}, "", cleanUrl);
+        } catch {}
+        return;
+      }
+    }
+
     if (hasAutoSelected || !conversations) return;
     if (conversations.length > 0) {
       setActiveConversationId(conversations[0].id);
     }
     setHasAutoSelected(true);
   }, [conversations, hasAutoSelected]);
+
+  // Listen for desktop/in-app requests to switch to a newly created conversation
+  useEffect(() => {
+    const handleOpenConversationId = (e: Event) => {
+      const id = (e as CustomEvent<{ conversationId?: string }>).detail?.conversationId;
+      if (id) {
+        setActiveConversationId(id);
+        setIsNewConversationPending(false);
+        setHasAutoSelected(true);
+        loadConversations();
+      }
+    };
+    window.addEventListener("companion:open-conversation-id", handleOpenConversationId);
+    return () => {
+      window.removeEventListener("companion:open-conversation-id", handleOpenConversationId);
+    };
+  }, [loadConversations]);
 
     async function handleDeleteConversation(id: string) {
     const res = await authFetch(`/api/conversations/${id}`, { method: "DELETE" });

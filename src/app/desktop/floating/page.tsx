@@ -4,19 +4,47 @@
  * Floating Nikki Desktop Overlay Route (/desktop/floating)
  *
  * Rendered inside Electron's transparent, frameless, always-on-top BrowserWindow.
- * Reuses the existing CompanionCharacter artwork, animations, and proactive
- * nudge data — never creates a second personality or chat engine.
+ * Compact proactive desktop companion: displays Nikki's animated character,
+ * a short contextual reminder or check-in, and relevant action buttons.
+ *
+ * Does NOT contain any chat input, message composer, or conversation history.
+ * Clicking "Talk to Nikki" creates a NEW conversation in the main Companion app.
  */
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Minimize2, Maximize2, X, Move, Send } from "lucide-react";
+import { MessageCircle, Minimize2, Maximize2, X, Move, Clock, Check, WifiOff } from "lucide-react";
 import { CompanionCharacter, type CompanionPose } from "@/components/character/CompanionCharacter";
+import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/lib/api/authFetch";
 import type { FloatingNudgePayload, FloatingOverlayState } from "@/types/desktop";
 
-const AUTO_COLLAPSE_MS = 45_000;
-const NUDGE_POLL_MS = 60_000;
+const AUTO_COLLAPSE_MS = 90_000;
+const NUDGE_POLL_MS = 45_000;
+
+type ReminderKind = "sleep" | "study" | "hobby" | "upcoming" | "checkin";
+
+function classifyTrigger(trigger?: string | null): ReminderKind {
+  switch (trigger) {
+    case "sleep_reminder":
+    case "late_night":
+    case "unusually_late":
+      return "sleep";
+    case "study_reminder":
+    case "timetable_unstarted":
+    case "deadline_approaching":
+    case "task_overdue":
+    case "task_unfinished":
+    case "activity_missed":
+      return "study";
+    case "hobby_reminder":
+      return "hobby";
+    case "upcoming_activity":
+      return "upcoming";
+    default:
+      return "checkin";
+  }
+}
 
 function mapPose(raw?: string): CompanionPose {
   const valid: CompanionPose[] = [
@@ -32,6 +60,7 @@ function mapPose(raw?: string): CompanionPose {
     "concerned",
     "happy",
     "curious",
+    "speaking",
   ];
   if (raw && valid.includes(raw as CompanionPose)) {
     return raw as CompanionPose;
@@ -39,7 +68,17 @@ function mapPose(raw?: string): CompanionPose {
   return "idle";
 }
 
+function getTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
 export default function FloatingNikkiPage() {
+  const { firebaseUser, loading: authLoading } = useAuth();
+
   const [nudge, setNudge] = useState<FloatingNudgePayload | null>(null);
   const [overlayState, setOverlayState] = useState<FloatingOverlayState>({
     visible: true,
@@ -51,17 +90,18 @@ export default function FloatingNikkiPage() {
     authenticated: true,
   });
   const [isHovered, setIsHovered] = useState(false);
-  const [replyText, setReplyText] = useState("");
-  const [isSendingReply, setIsSendingReply] = useState(false);
-  const [replyError, setReplyError] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(true);
+  const [isActing, setIsActing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const isDraggingRef = useRef(false);
   const dragMovedRef = useRef(false);
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const snoozeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSeenNudgeIdRef = useRef<string | null>(null);
 
-  // Force transparent background on html & body so Electron's transparent window works cleanly
+  // Transparent background for Electron overlay
   useEffect(() => {
     const html = document.documentElement;
     const body = document.body;
@@ -76,30 +116,87 @@ export default function FloatingNikkiPage() {
     };
   }, []);
 
-  // Auto-collapse speech bubble after inactivity so Nikki never obstructs work
-  const resetCollapseTimer = useCallback(() => {
+  // Report auth state directly from floating window so it works even if main window is closed
+  useEffect(() => {
+    if (authLoading) return;
+    const isAuth = Boolean(firebaseUser);
+    setOverlayState((prev) => ({ ...prev, authenticated: isAuth }));
+    window.companionDesktop?.reportAuthState({
+      authenticated: isAuth,
+      uid: firebaseUser?.uid ?? null,
+    });
+  }, [firebaseUser, authLoading]);
+
+  // Poll /api/nikki/nudge?evaluate=1
+  const pollPendingNudge = useCallback(async () => {
+    if (!firebaseUser || !navigator.onLine) return;
+    try {
+      const res = await authFetch("/api/nikki/nudge?evaluate=1");
+      if (!res.ok) return;
+      const json = await res.json();
+      const data = json?.data;
+      if (data?.id && data.id !== lastSeenNudgeIdRef.current) {
+        lastSeenNudgeIdRef.current = data.id;
+        setActionError(null);
+        setOverlayState((prev) => ({ ...prev, minimized: false }));
+        window.companionDesktop?.setFloatingMinimized(false);
+        setNudge({
+          id: data.id,
+          trigger: data.trigger,
+          message: data.message,
+          pose: data.pose || "speaking",
+          strictness: data.strictness,
+          metadata: data.metadata || {},
+        });
+      }
+    } catch {
+      // Ignore transient offline / network errors
+    }
+  }, [firebaseUser]);
+
+  // Online / offline handling with automatic reconnect poll
+  useEffect(() => {
+    const syncOnline = () => {
+      const online = navigator.onLine;
+      setIsOnline(online);
+      window.companionDesktop?.reportOnlineStatus(online);
+      if (online) {
+        pollPendingNudge();
+      }
+    };
+    syncOnline();
+    window.addEventListener("online", syncOnline);
+    window.addEventListener("offline", syncOnline);
+    return () => {
+      window.removeEventListener("online", syncOnline);
+      window.removeEventListener("offline", syncOnline);
+    };
+  }, [pollPendingNudge]);
+
+  // Auto-collapse bubble after inactivity so Nikki never obstructs desktop work
+  useEffect(() => {
     if (collapseTimerRef.current) {
       clearTimeout(collapseTimerRef.current);
       collapseTimerRef.current = null;
     }
-    collapseTimerRef.current = setTimeout(() => {
-      setNudge(null);
-    }, AUTO_COLLAPSE_MS);
-  }, []);
-
-  useEffect(() => {
-    if (nudge && !replyText && !isSendingReply) {
-      resetCollapseTimer();
-    } else if (collapseTimerRef.current && (replyText || isSendingReply)) {
-      clearTimeout(collapseTimerRef.current);
-      collapseTimerRef.current = null;
+    if (nudge && !isActing) {
+      collapseTimerRef.current = setTimeout(() => {
+        setNudge(null);
+      }, AUTO_COLLAPSE_MS);
     }
     return () => {
       if (collapseTimerRef.current) clearTimeout(collapseTimerRef.current);
     };
-  }, [nudge, replyText, isSendingReply, resetCollapseTimer]);
+  }, [nudge, isActing]);
 
-  // Listen to Electron main-process state & nudges
+  // Clean up snooze backup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (snoozeTimerRef.current) clearTimeout(snoozeTimerRef.current);
+    };
+  }, []);
+
+  // Listen to Electron main-process state & forwarded nudges
   useEffect(() => {
     const desktop = window.companionDesktop;
     if (!desktop) return;
@@ -108,12 +205,12 @@ export default function FloatingNikkiPage() {
       if (incoming?.id) {
         lastSeenNudgeIdRef.current = incoming.id;
       }
-      setReplyError(null);
+      setActionError(null);
       setNudge(incoming);
     });
 
     const unsubState = desktop.onFloatingState((state) => {
-      setOverlayState(state);
+      setOverlayState((prev) => ({ ...prev, ...state }));
       if (state.paused || state.dnd || !state.visible) {
         setNudge(null);
       }
@@ -125,10 +222,10 @@ export default function FloatingNikkiPage() {
     };
   }, []);
 
-  // Poll /api/nikki/nudge directly so Nikki still initiates when main window is hidden
+  // Background polling independent of whether the Companion website is open
   useEffect(() => {
     if (
-      !overlayState.authenticated ||
+      !firebaseUser ||
       overlayState.paused ||
       overlayState.dnd ||
       !overlayState.visible ||
@@ -137,43 +234,19 @@ export default function FloatingNikkiPage() {
       return;
     }
 
-    let cancelled = false;
-    const pollPendingNudge = async () => {
-      try {
-        const res = await authFetch("/api/nikki/nudge");
-        if (!res.ok || cancelled) return;
-        const json = await res.json();
-        const data = json?.data;
-        if (data?.id && data.id !== lastSeenNudgeIdRef.current) {
-          lastSeenNudgeIdRef.current = data.id;
-          setReplyError(null);
-          setNudge({
-            id: data.id,
-            trigger: data.trigger,
-            message: data.message,
-            pose: data.pose,
-            strictness: data.strictness,
-          });
-        }
-      } catch {
-        // Ignore transient network errors while offline
-      }
-    };
-
+    pollPendingNudge();
     const timer = setInterval(pollPendingNudge, NUDGE_POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
+    return () => clearInterval(timer);
   }, [
-    overlayState.authenticated,
+    firebaseUser,
     overlayState.paused,
     overlayState.dnd,
     overlayState.visible,
     overlayState.suppressedByFullscreen,
+    pollPendingNudge,
   ]);
 
-  // Dynamic click-through: transparent areas pass clicks to VS Code / Chrome / Desktop
+  // Dynamic click-through on transparent regions
   const handleMouseEnterInteractive = useCallback(() => {
     setIsHovered(true);
     window.companionDesktop?.setFloatingIgnoreMouse(false);
@@ -185,7 +258,7 @@ export default function FloatingNikkiPage() {
     window.companionDesktop?.setFloatingIgnoreMouse(true);
   }, []);
 
-  // Drag-to-reposition using screen coordinates -> Electron main process moveBy
+  // Drag-to-reposition using screen coordinates
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     if ((e.target as HTMLElement).closest("button")) return;
     isDraggingRef.current = true;
@@ -215,10 +288,162 @@ export default function FloatingNikkiPage() {
     } catch {}
   }, []);
 
-  const handleOpenConversation = useCallback(() => {
-    if (dragMovedRef.current) return;
-    window.companionDesktop?.openMainConversation(nudge?.id);
-  }, [nudge?.id]);
+  const clearLocalSnoozeTimer = () => {
+    if (snoozeTimerRef.current) {
+      clearTimeout(snoozeTimerRef.current);
+      snoozeTimerRef.current = null;
+    }
+  };
+
+  // Contextual Action Handlers
+  const handleTalkToNikki = useCallback(
+    async (e?: React.MouseEvent) => {
+      e?.stopPropagation();
+      if (dragMovedRef.current || isActing) return;
+
+      clearLocalSnoozeTimer();
+      setIsActing(true);
+      setActionError(null);
+
+      try {
+        if (!firebaseUser) {
+          window.companionDesktop?.openMainConversation({ nudgeId: nudge?.id });
+          setNudge(null);
+          return;
+        }
+
+        const res = await authFetch("/api/nikki/nudge/action", {
+          method: "POST",
+          body: JSON.stringify({
+            action: "talk",
+            nudgeId: nudge?.id || undefined,
+            trigger: nudge?.trigger || "general_checkin",
+            message: nudge?.message || undefined,
+            metadata: nudge?.metadata || {},
+            timezone: getTimezone(),
+          }),
+        });
+        const json = await res.json();
+        if (!res.ok || !json?.data?.conversationId) {
+          throw new Error(json?.error?.message || "Couldn't start conversation.");
+        }
+
+        const conversationId = json.data.conversationId as string;
+        setNudge(null);
+
+        if (window.companionDesktop?.openMainConversation) {
+          window.companionDesktop.openMainConversation({
+            conversationId,
+            nudgeId: nudge?.id,
+          });
+        } else {
+          window.open(`/dashboard?conversationId=${encodeURIComponent(conversationId)}`, "_blank");
+        }
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : "Could not open conversation.");
+      } finally {
+        setIsActing(false);
+      }
+    },
+    [firebaseUser, isActing, nudge]
+  );
+
+  const handleSnooze = useCallback(
+    async (e: React.MouseEvent, minutes?: number) => {
+      e.stopPropagation();
+      if (isActing) return;
+      setIsActing(true);
+      setActionError(null);
+
+      const activeNudge = nudge;
+      try {
+        if (firebaseUser) {
+          const res = await authFetch("/api/nikki/nudge/action", {
+            method: "POST",
+            body: JSON.stringify({
+              action: "snooze",
+              nudgeId: activeNudge?.id || undefined,
+              trigger: activeNudge?.trigger || "general_checkin",
+              minutes,
+              timezone: getTimezone(),
+            }),
+          });
+          const json = await res.json();
+          const snoozedUntilIso = json?.data?.snoozedUntil;
+          clearLocalSnoozeTimer();
+          if (snoozedUntilIso) {
+            const delayMs = Math.max(5_000, new Date(snoozedUntilIso).getTime() - Date.now() + 1500);
+            snoozeTimerRef.current = setTimeout(() => {
+              pollPendingNudge();
+            }, delayMs);
+          }
+        }
+        setNudge(null);
+      } catch {
+        setActionError("Snooze failed — check connection.");
+      } finally {
+        setIsActing(false);
+      }
+    },
+    [firebaseUser, isActing, nudge, pollPendingNudge]
+  );
+
+  const handleAcknowledge = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (isActing) return;
+      clearLocalSnoozeTimer();
+      setIsActing(true);
+      const id = nudge?.id;
+      const trigger = nudge?.trigger;
+      setNudge(null);
+      try {
+        if (firebaseUser) {
+          await authFetch("/api/nikki/nudge/action", {
+            method: "POST",
+            body: JSON.stringify({
+              action: "acknowledge",
+              nudgeId: id || undefined,
+              trigger: trigger || "general_checkin",
+              timezone: getTimezone(),
+            }),
+          });
+        }
+      } catch {
+        // best-effort
+      } finally {
+        setIsActing(false);
+      }
+    },
+    [firebaseUser, isActing, nudge]
+  );
+
+  const handleDismiss = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (isActing) return;
+      clearLocalSnoozeTimer();
+      const id = nudge?.id;
+      const trigger = nudge?.trigger;
+      setNudge(null);
+      try {
+        if (firebaseUser) {
+          await authFetch("/api/nikki/nudge/action", {
+            method: "POST",
+            body: JSON.stringify({
+              action: "dismiss",
+              nudgeId: id || undefined,
+              trigger: trigger || "general_checkin",
+              timezone: getTimezone(),
+            }),
+          });
+        }
+      } catch {
+        // best-effort
+      }
+    },
+    [firebaseUser, isActing, nudge]
+  );
 
   const handleAvatarClick = useCallback(() => {
     if (dragMovedRef.current) return;
@@ -228,72 +453,17 @@ export default function FloatingNikkiPage() {
       return;
     }
     if (!nudge) {
-      setReplyError(null);
+      setActionError(null);
       setNudge({
         id: "",
-        trigger: "user_initiated",
-        message: "Heyyy, what's up? What are you working on right now?",
+        trigger: "general_checkin",
+        message: firebaseUser
+          ? "Heyyy, how have you been? Want to check in or open a chat?"
+          : "Sign in to Companion to connect Nikki with your day.",
         pose: "wave",
       });
     }
-  }, [nudge, overlayState.minimized]);
-
-  const handleSendInlineReply = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const trimmed = replyText.trim();
-      if (!trimmed || isSendingReply) return;
-
-      setIsSendingReply(true);
-      setReplyError(null);
-      try {
-        const res = await authFetch("/api/nikki/nudge/reply", {
-          method: "POST",
-          body: JSON.stringify({
-            message: trimmed,
-            nudgeId: nudge?.id || undefined,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-          }),
-        });
-        const json = await res.json();
-        if (!res.ok || !json?.data?.reply) {
-          throw new Error(json?.error?.message || "Couldn't reach Nikki right now.");
-        }
-        setReplyText("");
-        setNudge((prev) => ({
-          id: prev?.id || "",
-          trigger: prev?.trigger || "reply",
-          message: json.data.reply,
-          pose: json.data.pose || "happy",
-        }));
-      } catch (err) {
-        setReplyError(err instanceof Error ? err.message : "Reply failed.");
-      } finally {
-        setIsSendingReply(false);
-      }
-    },
-    [replyText, isSendingReply, nudge?.id]
-  );
-
-  const handleDismissNudge = useCallback(
-    async (e: React.MouseEvent) => {
-      e.stopPropagation();
-      const id = nudge?.id;
-      setNudge(null);
-      if (id) {
-        try {
-          await authFetch("/api/nikki/nudge/dismiss", {
-            method: "POST",
-            body: JSON.stringify({ nudgeId: id }),
-          });
-        } catch {
-          // best-effort
-        }
-      }
-    },
-    [nudge?.id]
-  );
+  }, [firebaseUser, nudge, overlayState.minimized]);
 
   const handleToggleMinimize = useCallback(
     (e: React.MouseEvent) => {
@@ -306,21 +476,29 @@ export default function FloatingNikkiPage() {
     [overlayState.minimized]
   );
 
-  const handleHide = useCallback((e: React.MouseEvent) => {
+  const handleHideToTray = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     setNudge(null);
     window.companionDesktop?.hideFloatingNikki();
   }, []);
 
-  const currentPose: CompanionPose = nudge
-    ? mapPose(nudge.pose)
+  const reminderKind = classifyTrigger(nudge?.trigger);
+  const sleepSnoozeMins =
+    typeof nudge?.metadata?.sleepReminderSnoozeMinutes === "number"
+      ? nudge.metadata.sleepReminderSnoozeMinutes
+      : 25;
+
+  const currentPose: CompanionPose = isActing
+    ? "think"
+    : nudge
+    ? mapPose(nudge.pose || "speaking")
     : isHovered
     ? "wave"
     : "idle";
 
   return (
     <div className="flex h-screen w-screen flex-col items-end justify-end bg-transparent p-3 select-none">
-      {/* Contextual Speech Bubble */}
+      {/* Compact Contextual Reminder / Check-in Card (NO chat input or history) */}
       <AnimatePresence>
         {nudge && !overlayState.minimized && (
           <motion.div
@@ -329,56 +507,175 @@ export default function FloatingNikkiPage() {
             exit={{ opacity: 0, y: 8, scale: 0.94 }}
             onMouseEnter={handleMouseEnterInteractive}
             onMouseLeave={handleMouseLeaveInteractive}
-            className="mb-2 w-[300px] rounded-2xl border border-white/15 bg-[#14132a]/95 p-3.5 text-sm text-white shadow-2xl backdrop-blur-md"
+            className="mb-2 w-[288px] rounded-2xl border border-white/15 bg-[#14132a]/95 p-3.5 text-sm text-white shadow-2xl backdrop-blur-md"
           >
             <div className="flex items-start justify-between gap-2">
-              <p className="leading-snug text-white/95">{nudge.message}</p>
+              <p className="text-[13px] leading-snug text-white/95">{nudge.message}</p>
               <button
                 type="button"
-                aria-label="Dismiss message"
-                onClick={handleDismissNudge}
+                aria-label="Dismiss reminder"
+                onClick={handleDismiss}
                 className="shrink-0 rounded-full p-1 text-white/50 hover:bg-white/10 hover:text-white"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
 
-            {/* Inline reply without leaving current desktop window */}
-            <form onSubmit={handleSendInlineReply} className="mt-2.5 flex items-center gap-1.5">
-              <input
-                type="text"
-                value={replyText}
-                onChange={(e) => setReplyText(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                placeholder="Reply to Nikki..."
-                disabled={isSendingReply}
-                className="min-w-0 flex-1 rounded-xl border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs text-white placeholder-white/40 focus:border-violet-400 focus:outline-none"
-              />
-              <button
-                type="submit"
-                disabled={isSendingReply || !replyText.trim()}
-                aria-label="Send reply"
-                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-violet-500 text-white transition hover:bg-violet-400 disabled:opacity-40"
-              >
-                <Send className="h-3.5 w-3.5" />
-              </button>
-            </form>
-            {replyError && (
-              <p className="mt-1 text-[11px] text-rose-300">{replyError}</p>
+            {actionError && (
+              <p className="mt-1.5 text-[11px] text-rose-300">{actionError}</p>
             )}
 
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <span className="text-[11px] text-cyan-300/75">
-                {isSendingReply ? "Nikki is thinking..." : "Reply here or expand"}
-              </span>
-              <button
-                type="button"
-                onClick={handleOpenConversation}
-                className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-2 py-0.5 text-[11px] font-medium text-violet-100 hover:bg-violet-500/30"
-              >
-                <MessageCircle className="h-3 w-3" />
-                Full Chat
-              </button>
+            {/* Contextual Action Buttons */}
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              {reminderKind === "sleep" && (
+                <>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={(e) => handleSnooze(e, sleepSnoozeMins)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-white/15 bg-white/10 px-2.5 py-1.5 text-[11px] font-medium text-white/90 transition hover:bg-white/20 disabled:opacity-50"
+                  >
+                    <Clock className="h-3 w-3 text-indigo-300" />
+                    Snooze {sleepSnoozeMins} min
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={handleAcknowledge}
+                    className="inline-flex items-center gap-1 rounded-xl border border-emerald-400/30 bg-emerald-500/20 px-2.5 py-1.5 text-[11px] font-medium text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-50"
+                  >
+                    <Check className="h-3 w-3" />
+                    I&apos;m going to sleep
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={handleTalkToNikki}
+                    className="inline-flex items-center gap-1 rounded-xl bg-violet-500 px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-violet-400 disabled:opacity-50"
+                  >
+                    <MessageCircle className="h-3 w-3" />
+                    Talk to Nikki
+                  </button>
+                </>
+              )}
+
+              {reminderKind === "study" && (
+                <>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={handleAcknowledge}
+                    className="inline-flex items-center gap-1 rounded-xl border border-emerald-400/30 bg-emerald-500/20 px-2.5 py-1.5 text-[11px] font-medium text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-50"
+                  >
+                    <Check className="h-3 w-3" />
+                    Start studying
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={(e) => handleSnooze(e, 15)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-white/15 bg-white/10 px-2.5 py-1.5 text-[11px] font-medium text-white/90 transition hover:bg-white/20 disabled:opacity-50"
+                  >
+                    <Clock className="h-3 w-3" />
+                    Snooze
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={handleTalkToNikki}
+                    className="inline-flex items-center gap-1 rounded-xl bg-violet-500 px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-violet-400 disabled:opacity-50"
+                  >
+                    <MessageCircle className="h-3 w-3" />
+                    Talk to Nikki
+                  </button>
+                </>
+              )}
+
+              {reminderKind === "hobby" && (
+                <>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={handleAcknowledge}
+                    className="inline-flex items-center gap-1 rounded-xl border border-emerald-400/30 bg-emerald-500/20 px-2.5 py-1.5 text-[11px] font-medium text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-50"
+                  >
+                    <Check className="h-3 w-3" />
+                    Let&apos;s do it
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={(e) => handleSnooze(e, 30)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-white/15 bg-white/10 px-2.5 py-1.5 text-[11px] font-medium text-white/90 transition hover:bg-white/20 disabled:opacity-50"
+                  >
+                    <Clock className="h-3 w-3" />
+                    Remind me later
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={handleTalkToNikki}
+                    className="inline-flex items-center gap-1 rounded-xl bg-violet-500 px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-violet-400 disabled:opacity-50"
+                  >
+                    <MessageCircle className="h-3 w-3" />
+                    Talk to Nikki
+                  </button>
+                </>
+              )}
+
+              {reminderKind === "upcoming" && (
+                <>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={handleAcknowledge}
+                    className="inline-flex items-center gap-1 rounded-xl border border-emerald-400/30 bg-emerald-500/20 px-2.5 py-1.5 text-[11px] font-medium text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-50"
+                  >
+                    <Check className="h-3 w-3" />
+                    I&apos;m ready
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={(e) => handleSnooze(e, 10)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-white/15 bg-white/10 px-2.5 py-1.5 text-[11px] font-medium text-white/90 transition hover:bg-white/20 disabled:opacity-50"
+                  >
+                    <Clock className="h-3 w-3" />
+                    Snooze
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={handleTalkToNikki}
+                    className="inline-flex items-center gap-1 rounded-xl bg-violet-500 px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-violet-400 disabled:opacity-50"
+                  >
+                    <MessageCircle className="h-3 w-3" />
+                    Talk to Nikki
+                  </button>
+                </>
+              )}
+
+              {reminderKind === "checkin" && (
+                <>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={handleTalkToNikki}
+                    className="inline-flex items-center gap-1 rounded-xl bg-violet-500 px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-violet-400 disabled:opacity-50"
+                  >
+                    <MessageCircle className="h-3 w-3" />
+                    Talk to Nikki
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={handleDismiss}
+                    className="inline-flex items-center gap-1 rounded-xl border border-white/15 bg-white/10 px-2.5 py-1.5 text-[11px] font-medium text-white/80 transition hover:bg-white/20 disabled:opacity-50"
+                  >
+                    Maybe later
+                  </button>
+                </>
+              )}
             </div>
           </motion.div>
         )}
@@ -403,6 +700,11 @@ export default function FloatingNikkiPage() {
           <span className="px-1 text-white/50" title="Drag to move Nikki">
             <Move className="h-3 w-3" />
           </span>
+          {!isOnline && (
+            <span className="px-1 text-amber-300" title="Offline — waiting to reconnect">
+              <WifiOff className="h-3 w-3" />
+            </span>
+          )}
           <button
             type="button"
             onClick={handleToggleMinimize}
@@ -417,22 +719,22 @@ export default function FloatingNikkiPage() {
           </button>
           <button
             type="button"
-            onClick={handleHide}
-            title="Hide Nikki to tray"
+            onClick={handleHideToTray}
+            title="Minimize Nikki to system tray"
             className="rounded-full p-1 text-white/70 hover:bg-white/10 hover:text-rose-300"
           >
             <X className="h-3 w-3" />
           </button>
         </div>
 
-        {/* Minimized pill vs Full animated CompanionCharacter */}
+        {/* Minimized pill vs Animated CompanionCharacter */}
         {overlayState.minimized ? (
           <div className="flex h-12 w-12 items-center justify-center rounded-full border border-violet-400/40 bg-[#161533]/90 shadow-lg backdrop-blur-md">
             <CompanionCharacter pose="idle" className="h-10 w-10" />
           </div>
         ) : (
           <div className="relative drop-shadow-[0_8px_20px_rgba(124,92,255,0.35)]">
-            <CompanionCharacter pose={currentPose} className="h-28 w-28" />
+            <CompanionCharacter pose={currentPose} className="h-24 w-24" />
           </div>
         )}
       </div>

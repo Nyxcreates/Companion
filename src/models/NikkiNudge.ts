@@ -1,7 +1,7 @@
 import mongoose, { Schema, type Document, type Model } from "mongoose";
 import type { NikkiStrictness } from "@/types/notification";
 
-export type NikkiNudgeStatus = "created" | "delivered" | "replied" | "dismissed" | "expired";
+export type NikkiNudgeStatus = "created" | "delivered" | "replied" | "dismissed" | "snoozed" | "expired";
 
 export type NikkiTrigger =
   | "no_timetable"
@@ -17,6 +17,11 @@ export type NikkiTrigger =
   | "focus_finished"
   | "late_night"
   | "unusually_late"
+  | "sleep_reminder"
+  | "study_reminder"
+  | "hobby_reminder"
+  | "general_checkin"
+  | "upcoming_activity"
   | "long_session"
   | "long_silence"
   | "user_inactive"
@@ -33,6 +38,7 @@ export interface NikkiNudgeDocument extends Document {
   status: NikkiNudgeStatus;
   idempotencyKey: string;
   strictness: NikkiStrictness;
+  snoozedUntil?: Date | null;
   metadata?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
@@ -57,6 +63,11 @@ const NikkiNudgeSchema = new Schema<NikkiNudgeDocument>(
         "focus_finished",
         "late_night",
         "unusually_late",
+        "sleep_reminder",
+        "study_reminder",
+        "hobby_reminder",
+        "general_checkin",
+        "upcoming_activity",
         "long_session",
         "long_silence",
         "user_inactive",
@@ -72,7 +83,7 @@ const NikkiNudgeSchema = new Schema<NikkiNudgeDocument>(
     message: { type: String, required: true },
     status: {
       type: String,
-      enum: ["created", "delivered", "replied", "dismissed", "expired"],
+      enum: ["created", "delivered", "replied", "dismissed", "snoozed", "expired"],
       default: "created",
       index: true,
     },
@@ -82,6 +93,7 @@ const NikkiNudgeSchema = new Schema<NikkiNudgeDocument>(
       enum: ["gentle", "playful", "firm"],
       default: "playful",
     },
+    snoozedUntil: { type: Date, default: null },
     metadata: { type: Schema.Types.Mixed, default: () => ({}) },
   },
   { timestamps: true }

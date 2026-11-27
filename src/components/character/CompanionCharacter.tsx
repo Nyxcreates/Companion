@@ -16,7 +16,8 @@ export type CompanionPose =
   | "sleepy"
   | "concerned"
   | "happy"
-  | "curious";
+  | "curious"
+  | "speaking";
 
 interface CompanionCharacterProps {
   pose?: CompanionPose;
@@ -54,6 +55,8 @@ export function CompanionCharacter({ pose = "idle", className }: CompanionCharac
         return { rotate: [0, 4, 0], y: [0, -3, 0], scale: [1, 1.03, 1] };
       case "wave":
         return { y: [0, -3, 0], rotate: [0, 2, 0] };
+      case "speaking":
+        return { y: [0, -4, 0], scale: [1, 1.04, 0.99, 1.03, 1] };
       case "idle":
       default:
         return { y: [0, -3, 0], scale: [1, 1.02, 1] };
@@ -72,6 +75,8 @@ export function CompanionCharacter({ pose = "idle", className }: CompanionCharac
         return { duration: 3.5, repeat: Infinity, ease: "easeInOut" as const };
       case "wave":
         return { duration: 1.2, repeat: Infinity, ease: "easeInOut" as const };
+      case "speaking":
+        return { duration: 0.75, repeat: Infinity, ease: "easeInOut" as const };
       case "think":
       case "concerned":
       case "curious":

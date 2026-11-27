@@ -140,6 +140,15 @@ export interface NikkiContextSnapshot {
   proactiveEnabled: boolean;
   strictness: NikkiStrictness;
   checkInFrequency: "gentle" | "balanced" | "frequent";
+  sleepReminderEnabled: boolean;
+  sleepReminderSnoozeMinutes: number;
+  sleepSnoozeUntil: Date | null;
+  sleepDismissedForDate: string | null;
+  studyRemindersEnabled: boolean;
+  hobbyRemindersEnabled: boolean;
+  isUserExhausted: boolean;
+  upcomingActivities: Array<{ title: string; start: string; end: string; type: string; minutesUntilStart: number }>;
+  hobbyCandidates: Array<{ title: string; source: "schedule" | "goal"; start?: string; goalId?: string }>;
 
   // Schedule & Timetable
   hasScheduleToday: boolean;
@@ -353,8 +362,12 @@ export async function buildNikkiContext(
   const scheduleItems: ScheduleItemContext[] = [];
   const unstartedStartedItems: UnstartedStartedItemContext[] = [];
   const missedActivities: MissedActivityContext[] = [];
+  const upcomingActivities: Array<{ title: string; start: string; end: string; type: string; minutesUntilStart: number }> = [];
+  const hobbyCandidates: Array<{ title: string; source: "schedule" | "goal"; start?: string; goalId?: string }> = [];
   let completedActivitiesCountToday = 0;
   const hasScheduleToday = Boolean(scheduleDoc && scheduleDoc.items && scheduleDoc.items.length > 0);
+
+  const HOBBY_REGEX = /\b(dance|sing|singing|acting|actor|drama|music|guitar|piano|draw|drawing|paint|art|sketch|write|writing|creative|hobby|hobbies|project|exercise|workout|yoga|run|walk|gym|stretch|rest|relax|meditat|read|reading)\b/i;
 
   if (scheduleDoc?.items) {
     for (const item of scheduleDoc.items) {
@@ -371,10 +384,26 @@ export async function buildNikkiContext(
         status,
       });
 
+      if (status === "pending" && HOBBY_REGEX.test(item.title)) {
+        hobbyCandidates.push({ title: item.title, source: "schedule", start: item.start });
+      }
+
       if (item.type !== "break" && item.type !== "free" && item.start) {
         const [ih, im] = item.start.split(":").map(Number);
         const itemStartMins = ih * 60 + (im || 0);
         const minutesSinceStart = totalMinutes - itemStartMins;
+        const minutesUntilStart = itemStartMins - totalMinutes;
+
+        // Upcoming activity starting in 5..25 minutes
+        if (minutesUntilStart >= 5 && minutesUntilStart <= 25 && status === "pending") {
+          upcomingActivities.push({
+            title: item.title,
+            start: item.start,
+            end: item.end,
+            type: item.type,
+            minutesUntilStart,
+          });
+        }
 
         // Item started >= 10 minutes ago, but is not marked started or done
         if (minutesSinceStart >= 10 && minutesSinceStart <= 120) {
@@ -790,6 +819,23 @@ export async function buildNikkiContext(
     proactiveEnabled,
     strictness,
     checkInFrequency,
+    sleepReminderEnabled: prefs?.sleepReminderEnabled !== false,
+    sleepReminderSnoozeMinutes: prefs?.sleepReminderSnoozeMinutes ?? 25,
+    sleepSnoozeUntil: prefs?.sleepSnoozeUntil ? new Date(prefs.sleepSnoozeUntil) : null,
+    sleepDismissedForDate: prefs?.sleepDismissedForDate ?? null,
+    studyRemindersEnabled: prefs?.studyRemindersEnabled !== false,
+    hobbyRemindersEnabled: prefs?.hobbyRemindersEnabled !== false,
+    isUserExhausted: recentEmotions.some((e) => {
+      const ageHours = (now.getTime() - new Date(e.createdAt).getTime()) / (1000 * 60 * 60);
+      return ["exhausted", "tired", "overwhelmed"].includes(e.emotion.toLowerCase()) && ageHours <= 4;
+    }),
+    upcomingActivities,
+    hobbyCandidates: [
+      ...hobbyCandidates,
+      ...allGoalDocs
+        .filter((g) => g.status === "ACTIVE" && (HOBBY_REGEX.test(g.title) || HOBBY_REGEX.test(g.category || "")))
+        .map((g) => ({ title: g.title, source: "goal" as const, goalId: String(g._id) })),
+    ],
 
     hasScheduleToday,
     scheduleItems,

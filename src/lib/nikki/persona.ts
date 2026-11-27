@@ -19,6 +19,11 @@ export type NikkiScenario =
   | "focus_finished"
   | "late_night"
   | "unusually_late"
+  | "sleep_reminder"
+  | "study_reminder"
+  | "hobby_reminder"
+  | "general_checkin"
+  | "upcoming_activity"
   | "long_session"
   | "long_silence"
   | "user_inactive"
@@ -713,6 +718,81 @@ export const SCENARIO_TEMPLATES: Record<
       `{name}, having {totalPendingCount} tasks is a recipe for overwhelm, not productivity. Let's pick today's top 3 right now. What moves the needle most?`,
     ],
   },
+
+  sleep_reminder: {
+    gentle: [
+      `It's getting late, {name}. You should sleep now — we can continue working tomorrow.`,
+      `Hey {name}, your bedtime is here. Let's wrap up for tonight and get some real rest.`,
+    ],
+    playful: [
+      `It's getting late, {name}! You should sleep now — we can continue working tomorrow.`,
+      `Bedtime check, {name}! Close the tabs and let yourself rest tonight.`,
+    ],
+    firm: [
+      `{name}, it's past your bedtime. You should sleep now — we can pick everything back up tomorrow.`,
+      `Time to rest, {name}. Step away from the screen and get some sleep.`,
+    ],
+  },
+
+  study_reminder: {
+    gentle: [
+      `Hey {name}, whenever you feel ready, want to ease into '{itemTitle}' for a bit? No pressure.`,
+      `{name}, you have '{taskTitle}' waiting — want to plan a light, realistic study session together?`,
+    ],
+    playful: [
+      `Study check-in, {name}! Ready to dive into '{itemTitle}'? Even 20 minutes counts!`,
+      `Hey {name}, '{taskTitle}' is on your radar. Want to knock out a quick study block?`,
+    ],
+    firm: [
+      `{name}, it's time for '{itemTitle}'. Let's get a focused study session going.`,
+      `Study reminder, {name}: let's make steady progress on '{taskTitle}' now.`,
+    ],
+  },
+
+  hobby_reminder: {
+    gentle: [
+      `Hey {name}, you wanted to make time for {hobbyTitle}. Want to take a little moment for it today?`,
+      `{name}, don't forget to leave a little room for {hobbyTitle} — you deserve things you enjoy too.`,
+    ],
+    playful: [
+      `Hobby time, {name}! You wanted to make time for {hobbyTitle} — shall we do it?`,
+      `Hey {name}! Ready for a little {hobbyTitle}? All work and no play is no fun!`,
+    ],
+    firm: [
+      `{name}, you made space for {hobbyTitle} — protect that time for yourself today.`,
+      `Reminder, {name}: make time for {hobbyTitle} today so your creative/personal life stays alive too.`,
+    ],
+  },
+
+  general_checkin: {
+    gentle: [
+      `Heyyy {name}, how have you been? Tell me what's going on, I'm listening.`,
+      `How's your day going, {name}? Want to take a little breather?`,
+    ],
+    playful: [
+      `Heyyy {name}, how's your day going? Anything fun or wild on your mind?`,
+      `You've been at it for a while, {name} — want to take a little break or chat?`,
+    ],
+    firm: [
+      `Quick check-in, {name}: how's your day going so far? Shall we plan the rest of your day?`,
+      `Hey {name}, how are things moving today? Let's keep your energy steady.`,
+    ],
+  },
+
+  upcoming_activity: {
+    gentle: [
+      `Hey {name}, '{itemTitle}' is coming up soon. Want me to help you prepare?`,
+      `Just a gentle heads-up, {name}: '{itemTitle}' starts soon.`,
+    ],
+    playful: [
+      `Heads up, {name}! '{itemTitle}' is coming up soon — want to get ready together?`,
+      `Hey {name}, '{itemTitle}' is right around the corner! Ready for it?`,
+    ],
+    firm: [
+      `{name}, '{itemTitle}' starts soon. Wrap up what you're doing and get ready.`,
+      `Upcoming, {name}: '{itemTitle}' is about to start.`,
+    ],
+  },
 };
 
 // ── Persona System & Scenario Prompt Builders for Gemini ──────────────────────
@@ -927,6 +1007,34 @@ Context: ${userName} has ${ctx.totalPendingCount || 7}+ pending tasks today — 
 Task: Gently point out the overload with caring honesty. Invite them to pick just 2–3 real priorities for today and let the rest breathe. Never shame them for having too much.
 Strictness: ${context.strictness}.`;
 
+    case "sleep_reminder":
+      return `Scenario: Sleep reminder (preferred bedtime ${ctx.usualBedtime || context.usualBedtime}).
+Context: ${userName}'s bedtime is approaching or has passed${ctx.isSnoozeRepeat ? " (after snoozing earlier)" : ""}.
+Task: Gently remind ${userName} to wind down and go to sleep, reassuring them that we can continue working tomorrow. Keep it short and warm.
+Strictness: ${context.strictness}.`;
+
+    case "study_reminder":
+      return `Scenario: Study reminder.
+Context: ${userName} has '${ctx.itemTitle || ctx.taskTitle || "a study session"}' scheduled or pending.
+Task: Gently invite them to start a realistic study session without pressure.
+Strictness: ${context.strictness}.`;
+
+    case "hobby_reminder":
+      return `Scenario: Hobby / personal life reminder.
+Context: ${userName} wanted to make time for '${ctx.hobbyTitle || "their hobbies"}'.
+Task: Warmly encourage them to enjoy their hobby/creative time today.
+Strictness: ${context.strictness}.`;
+
+    case "general_checkin":
+      return `Scenario: General friendly check-in.
+Task: Check in warmly on how ${userName}'s day is going, with zero guilt or pressure to reply.
+Strictness: ${context.strictness}.`;
+
+    case "upcoming_activity":
+      return `Scenario: Upcoming scheduled activity ('${ctx.itemTitle || "activity"}' in ~${ctx.minutesUntilStart || 15}m).
+Task: Give a friendly heads-up and offer to help prepare.
+Strictness: ${context.strictness}.`;
+
     default:
       return `Scenario: Friendly check-in with ${userName}.`;
   }
@@ -968,6 +1076,11 @@ export function getPersonaFallbackMessage(
   else if (trigger === "task_overdue") scenarioKey = "task_overdue";
   else if (trigger === "task_celebration") scenarioKey = "task_celebration";
   else if (trigger === "overload_warning") scenarioKey = "overload_warning";
+  else if (trigger === "sleep_reminder") scenarioKey = "sleep_reminder";
+  else if (trigger === "study_reminder") scenarioKey = "study_reminder";
+  else if (trigger === "hobby_reminder") scenarioKey = "hobby_reminder";
+  else if (trigger === "general_checkin") scenarioKey = "general_checkin";
+  else if (trigger === "upcoming_activity") scenarioKey = "upcoming_activity";
 
   const templatesByStrictness = SCENARIO_TEMPLATES[scenarioKey] || SCENARIO_TEMPLATES.long_silence;
   const templates = templatesByStrictness[strictness] || templatesByStrictness.playful;
@@ -998,6 +1111,7 @@ export function getPersonaFallbackMessage(
   const completedCount = String(ctx.completedCount || ctx.completedTasksCount || context.completedTasksCountToday || 0);
   const completedActivities = String(ctx.completedActivitiesCount || context.completedActivitiesCountToday || 0);
   const totalPendingCount = String(ctx.totalPendingCount || context.totalPendingTasksCount || 0);
+  const hobbyTitle = (ctx.hobbyTitle as string) || "your hobby";
 
   const replacements: Record<string, string> = {
     name: userName,
@@ -1014,7 +1128,57 @@ export function getPersonaFallbackMessage(
     completedCount,
     completedActivities,
     totalPendingCount,
+    hobbyTitle,
   };
 
   return selectVariedMessage(templates, recentMessages, replacements);
+}
+
+export type ReminderCategoryKind = "sleep" | "study" | "hobby" | "upcoming" | "checkin";
+
+export function classifyTriggerCategory(trigger?: string | null): ReminderCategoryKind {
+  switch (trigger) {
+    case "sleep_reminder":
+    case "late_night":
+    case "unusually_late":
+      return "sleep";
+    case "study_reminder":
+    case "timetable_unstarted":
+    case "deadline_approaching":
+    case "task_overdue":
+    case "task_unfinished":
+    case "activity_missed":
+      return "study";
+    case "hobby_reminder":
+      return "hobby";
+    case "upcoming_activity":
+      return "upcoming";
+    default:
+      return "checkin";
+  }
+}
+
+export function getContextualOpeningFallback(
+  category: ReminderCategoryKind,
+  contextNote?: string
+): string {
+  switch (category) {
+    case "sleep":
+      return "Hey, tell me what happened. I'm listening. Is something keeping you awake, or are you finding it difficult to wind down?";
+    case "study":
+      return contextNote
+        ? `Ready to get started on ${contextNote}? Let's plan a realistic study session together.`
+        : "Ready to get started? Let's plan a realistic study session together.";
+    case "hobby":
+      return contextNote
+        ? `You wanted to make time for ${contextNote}! Shall we plan something fun?`
+        : "You wanted to make time for your hobbies! Shall we plan something fun?";
+    case "upcoming":
+      return contextNote
+        ? `You have ${contextNote} coming up. Want me to help you prepare?`
+        : "You have something coming up. Want me to help you prepare?";
+    case "checkin":
+    default:
+      return "Heyyy, how have you been? Tell me what's going on. I'm listening.";
+  }
 }

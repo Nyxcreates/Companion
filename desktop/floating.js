@@ -16,8 +16,8 @@
 const { BrowserWindow, screen } = require("electron");
 const path = require("path");
 
-const DEFAULT_WIDTH = 340;
-const DEFAULT_HEIGHT = 380;
+const DEFAULT_WIDTH = 330;
+const DEFAULT_HEIGHT = 310;
 const EDGE_PADDING = 18;
 const SNAP_THRESHOLD = 16;
 
@@ -30,6 +30,7 @@ function createSettingsStore() {
         x: null,
         y: null,
         displayId: null,
+        visible: true,
         minimized: false,
         dnd: false,
         allowOverFullscreen: false,
@@ -41,6 +42,7 @@ function createSettingsStore() {
       x: null,
       y: null,
       displayId: null,
+      visible: true,
       minimized: false,
       dnd: false,
       allowOverFullscreen: false,
@@ -93,7 +95,7 @@ class FloatingManager {
     /** @type {BrowserWindow | null} */
     this.window = null;
 
-    this.visible = true;
+    this.visible = Boolean(this.store.get("visible", true));
     this.paused = false;
     this.dnd = Boolean(this.store.get("dnd", false));
     this.minimized = Boolean(this.store.get("minimized", false));
@@ -103,6 +105,7 @@ class FloatingManager {
     this.isQuitting = false;
 
     this._fullscreenTimer = null;
+    this._reloadTimer = null;
     this._displayListenersAttached = false;
   }
 
@@ -152,7 +155,21 @@ class FloatingManager {
     const floatingUrl = `${this.baseUrl.replace(/\/$/, "")}/desktop/floating`;
     this.window.loadURL(floatingUrl);
 
+    this.window.webContents.on("did-fail-load", () => {
+      if (this.isQuitting || this._reloadTimer) return;
+      this._reloadTimer = setTimeout(() => {
+        this._reloadTimer = null;
+        if (this.window && !this.window.isDestroyed()) {
+          this.window.loadURL(floatingUrl);
+        }
+      }, 10_000);
+    });
+
     this.window.once("ready-to-show", () => {
+      if (this._reloadTimer) {
+        clearTimeout(this._reloadTimer);
+        this._reloadTimer = null;
+      }
       this._syncVisibility();
       this._pushStateToRenderer();
     });
@@ -304,6 +321,7 @@ class FloatingManager {
 
   setVisible(visible) {
     this.visible = Boolean(visible);
+    this.store.set("visible", this.visible);
     this._syncVisibility();
     this._pushStateToRenderer();
     this.onStateChange(this.getState());
@@ -415,6 +433,10 @@ class FloatingManager {
     if (this._fullscreenTimer) {
       clearInterval(this._fullscreenTimer);
       this._fullscreenTimer = null;
+    }
+    if (this._reloadTimer) {
+      clearTimeout(this._reloadTimer);
+      this._reloadTimer = null;
     }
     if (this.window && !this.window.isDestroyed()) {
       this.window.destroy();

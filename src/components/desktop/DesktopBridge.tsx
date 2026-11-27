@@ -91,6 +91,18 @@ export function DesktopBridge() {
       window.removeEventListener("companion:nudge-received", handleNudgeForward)
     );
 
+    // Listen for main-process requests to navigate to a newly created conversation
+    if (window.companionDesktop?.onOpenConversationId) {
+      const unsubConv = window.companionDesktop.onOpenConversationId((conversationId) => {
+        window.dispatchEvent(
+          new CustomEvent("companion:open-conversation-id", {
+            detail: { conversationId },
+          })
+        );
+      });
+      cleanups.push(unsubConv);
+    }
+
     return () => {
       cleanups.forEach((fn) => fn());
     };

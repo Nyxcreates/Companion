@@ -108,13 +108,39 @@ contextBridge.exposeInMainWorld("companionDesktop", {
   },
 
   /**
-   * Open the main Companion conversation window (optionally focused on a nudge).
-   * @param {string} [nudgeId]
+   * Open the main Companion conversation window (optionally focused on a conversation or nudge).
+   * @param {string | { conversationId?: string, nudgeId?: string }} [payload]
    */
-  openMainConversation: (nudgeId) => {
-    ipcRenderer.send("companion:open-conversation", {
-      nudgeId: typeof nudgeId === "string" ? nudgeId : null,
-    });
+  openMainConversation: (payload) => {
+    const normalized =
+      typeof payload === "string"
+        ? { nudgeId: payload, conversationId: null }
+        : {
+            conversationId: typeof payload?.conversationId === "string" ? payload.conversationId : null,
+            nudgeId: typeof payload?.nudgeId === "string" ? payload.nudgeId : null,
+          };
+    ipcRenderer.send("companion:open-conversation", normalized);
+  },
+
+  /**
+   * Read desktop-specific settings (autoLaunch, floatingVisible).
+   */
+  getDesktopSettings: () => ipcRenderer.invoke("companion:get-desktop-settings"),
+
+  /**
+   * Update desktop-specific settings (autoLaunch, floatingVisible).
+   */
+  setDesktopSettings: (settings) => ipcRenderer.invoke("companion:set-desktop-settings", settings),
+
+  /**
+   * Listen for main-process requests to open a specific conversationId.
+   * @param {(conversationId: string) => void} callback
+   * @returns {() => void} unsubscribe function
+   */
+  onOpenConversationId: (callback) => {
+    const handler = (_event, conversationId) => callback(conversationId);
+    ipcRenderer.on("companion:open-conversation-id", handler);
+    return () => ipcRenderer.removeListener("companion:open-conversation-id", handler);
   },
 
   /**

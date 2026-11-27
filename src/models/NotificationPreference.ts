@@ -34,6 +34,14 @@ export interface NotificationPreferenceDocument extends Document {
   learnedWeights: LearnedInterventionWeights;
   strictness: NikkiStrictness;
   lastSeenAt: Date | null;
+  sleepReminderEnabled: boolean;
+  sleepReminderSnoozeMinutes: number;
+  sleepSnoozeUntil: Date | null;
+  sleepDismissedForDate: string | null;
+  studyRemindersEnabled: boolean;
+  hobbyRemindersEnabled: boolean;
+  soundEnabled: boolean;
+  floatingVisible: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -81,6 +89,14 @@ const NotificationPreferenceSchema = new Schema<NotificationPreferenceDocument>(
       default: "playful",
     },
     lastSeenAt: { type: Date, default: null },
+    sleepReminderEnabled: { type: Boolean, default: true },
+    sleepReminderSnoozeMinutes: { type: Number, default: 25, min: 5, max: 120 },
+    sleepSnoozeUntil: { type: Date, default: null },
+    sleepDismissedForDate: { type: String, default: null },
+    studyRemindersEnabled: { type: Boolean, default: true },
+    hobbyRemindersEnabled: { type: Boolean, default: true },
+    soundEnabled: { type: Boolean, default: true },
+    floatingVisible: { type: Boolean, default: true },
     learnedWeights: {
       waterDismissCount: { type: Number, default: 0 },
       waterAcceptCount: { type: Number, default: 0 },

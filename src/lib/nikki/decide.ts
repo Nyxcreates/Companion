@@ -59,6 +59,74 @@ export function decideNikkiNudge(
     };
   }
 
+  // Parse usual wake/sleep times for time-of-day checks
+  const [wakeH, wakeM] = (context.usualWakeTime || "07:30").split(":").map(Number);
+  const wakeTotalMins = (wakeH || 7) * 60 + (wakeM || 30);
+
+  const [sleepH, sleepM] = (context.usualBedtime || "23:00").split(":").map(Number);
+  const sleepTotalMins = (sleepH || 23) * 60 + (sleepM || 0);
+
+  // ── Sleep Reminder & Snooze Evaluation (runs even if quiet hours just started) ──
+  const inActiveConversation =
+    context.minutesSinceLastUserMessage !== null && context.minutesSinceLastUserMessage < 10;
+
+  if (
+    context.sleepReminderEnabled !== false &&
+    context.sleepDismissedForDate !== context.localDate &&
+    !inActiveConversation
+  ) {
+    const nowMs = Date.now();
+    if (context.sleepSnoozeUntil) {
+      const snoozeMs = new Date(context.sleepSnoozeUntil).getTime();
+      if (nowMs >= snoozeMs) {
+        const snoozeBucket = Math.floor(snoozeMs / 60000);
+        const idempotencyKey = `${context.firebaseUid}:sleep_reminder:${context.localDate}:snooze:${snoozeBucket}`;
+        if (context.lastNudge?.idempotencyKey !== idempotencyKey) {
+          return {
+            shouldSpeak: true,
+            trigger: "sleep_reminder",
+            priorityScore: 98,
+            idempotencyKey,
+            reason: `Snoozed sleep reminder is due again (bedtime ${context.usualBedtime}).`,
+            triggerContext: {
+              usualBedtime: context.usualBedtime,
+              snoozeMinutes: context.sleepReminderSnoozeMinutes,
+              isSnoozeRepeat: true,
+            },
+          };
+        }
+      }
+    } else {
+      const approachMins = sleepTotalMins - 20;
+      const isApproachingOrPastBedtime =
+        sleepH >= 12
+          ? context.totalMinutes >= approachMins || context.currentHour < 4
+          : context.totalMinutes >= approachMins && context.currentHour < 12;
+
+      if (isApproachingOrPastBedtime) {
+        const idempotencyKey = `${context.firebaseUid}:sleep_reminder:${context.localDate}`;
+        const alreadySentTonight =
+          (context.lastNudge?.trigger === "sleep_reminder" || context.lastNudge?.trigger === "late_night") &&
+          isSameDay(context.lastNudge.createdAt, context.localDate);
+
+        if (!alreadySentTonight) {
+          return {
+            shouldSpeak: true,
+            trigger: "sleep_reminder",
+            priorityScore: 88,
+            idempotencyKey,
+            reason: `Approaching or past user's preferred bedtime (${context.usualBedtime}).`,
+            triggerContext: {
+              usualBedtime: context.usualBedtime,
+              snoozeMinutes: context.sleepReminderSnoozeMinutes,
+              isPastBedtime: context.totalMinutes >= sleepTotalMins || context.currentHour < 4,
+            },
+          };
+        }
+      }
+    }
+  }
+
   // ── Guard 3: Quiet hours ───────────────────────────────────────────────────
   if (context.isQuietHours) {
     return {
@@ -96,13 +164,6 @@ export function decideNikkiNudge(
       };
     }
   }
-
-  // Parse usual wake/sleep times for time-of-day checks
-  const [wakeH, wakeM] = (context.usualWakeTime || "07:30").split(":").map(Number);
-  const wakeTotalMins = (wakeH || 7) * 60 + (wakeM || 30);
-
-  const [sleepH, sleepM] = (context.usualBedtime || "23:00").split(":").map(Number);
-  const sleepTotalMins = (sleepH || 23) * 60 + (sleepM || 0);
 
   // ═════════════════════════════════════════════════════════════════════════════
   // PRIORITY 1: Immediate Real-Time Completions & Urgent Events
@@ -645,7 +706,137 @@ export function decideNikkiNudge(
     }
   }
 
-  // 16. TRIGGER: user_inactive / long_silence
+  // 16. TRIGGER: upcoming_activity (scheduled block starting in 5-25 mins)
+  if (context.upcomingActivities.length > 0) {
+    const upcoming = context.upcomingActivities[0];
+    const isStudy = /\b(study|revision|revise|homework|assignment|exam|class|lecture|focus|read|practice)\b/i.test(
+      upcoming.title
+    ) || upcoming.type === "focus" || upcoming.type === "study";
+
+    if (isStudy && context.studyRemindersEnabled !== false && !context.isUserExhausted) {
+      const idempotencyKey = `${context.firebaseUid}:study_reminder:${context.localDate}:${upcoming.start}`;
+      if (context.lastNudge?.idempotencyKey !== idempotencyKey) {
+        return {
+          shouldSpeak: true,
+          trigger: "study_reminder",
+          priorityScore: 62,
+          idempotencyKey,
+          reason: `Upcoming study block '${upcoming.title}' starts in ${upcoming.minutesUntilStart}m.`,
+          triggerContext: {
+            itemTitle: upcoming.title,
+            itemStart: upcoming.start,
+            itemEnd: upcoming.end,
+            minutesUntilStart: upcoming.minutesUntilStart,
+          },
+        };
+      }
+    } else {
+      const idempotencyKey = `${context.firebaseUid}:upcoming_activity:${context.localDate}:${upcoming.start}`;
+      if (context.lastNudge?.idempotencyKey !== idempotencyKey) {
+        return {
+          shouldSpeak: true,
+          trigger: "upcoming_activity",
+          priorityScore: 52,
+          idempotencyKey,
+          reason: `Upcoming scheduled activity '${upcoming.title}' starts in ${upcoming.minutesUntilStart}m.`,
+          triggerContext: {
+            itemTitle: upcoming.title,
+            itemStart: upcoming.start,
+            itemEnd: upcoming.end,
+            minutesUntilStart: upcoming.minutesUntilStart,
+          },
+        };
+      }
+    }
+  }
+
+  // 17. TRIGGER: study_reminder (pending study/assignment task when not exhausted)
+  if (
+    context.studyRemindersEnabled !== false &&
+    !context.isUserExhausted &&
+    context.currentHour >= 9 &&
+    context.currentHour <= 21
+  ) {
+    const studyTask = context.pendingTasks.find((t) =>
+      /\b(study|revision|revise|homework|assignment|exam|project|practice|read|course|lecture)\b/i.test(t.title)
+    );
+    if (studyTask) {
+      const idempotencyKey = `${context.firebaseUid}:study_reminder:task:${studyTask.id}:${context.localDate}`;
+      const alreadySentToday =
+        context.lastNudge?.trigger === "study_reminder" &&
+        isSameDay(context.lastNudge.createdAt, context.localDate);
+      if (!alreadySentToday && context.lastNudge?.idempotencyKey !== idempotencyKey) {
+        return {
+          shouldSpeak: true,
+          trigger: "study_reminder",
+          priorityScore: 42,
+          idempotencyKey,
+          reason: `Pending study task '${studyTask.title}' — gentle invitation to start a realistic session.`,
+          triggerContext: {
+            taskId: studyTask.id,
+            taskTitle: studyTask.title,
+          },
+        };
+      }
+    }
+  }
+
+  // 18. TRIGGER: hobby_reminder (scheduled hobby first, then active hobby goal, max 1/day)
+  if (
+    context.hobbyRemindersEnabled !== false &&
+    context.hobbyCandidates.length > 0 &&
+    context.currentHour >= 10 &&
+    context.currentHour <= 21
+  ) {
+    const candidate =
+      context.hobbyCandidates.find((c) => c.source === "schedule") ||
+      context.hobbyCandidates[0];
+    const idempotencyKey = `${context.firebaseUid}:hobby_reminder:${context.localDate}`;
+    const alreadySentToday =
+      context.lastNudge?.trigger === "hobby_reminder" &&
+      isSameDay(context.lastNudge.createdAt, context.localDate);
+
+    if (!alreadySentToday) {
+      return {
+        shouldSpeak: true,
+        trigger: "hobby_reminder",
+        priorityScore: 36,
+        idempotencyKey,
+        reason: `Gentle reminder for hobby/personal time: '${candidate.title}'.`,
+        triggerContext: {
+          hobbyTitle: candidate.title,
+          source: candidate.source,
+          goalId: candidate.goalId,
+          start: candidate.start,
+        },
+      };
+    }
+  }
+
+  // 19. TRIGGER: general_checkin (gentle daytime check-in within frequency limits)
+  if (context.currentHour >= 10 && context.currentHour <= 20) {
+    const windowBucket = Math.floor(context.currentHour / 5);
+    const idempotencyKey = `${context.firebaseUid}:general_checkin:${context.localDate}:${windowBucket}`;
+    const alreadySentRecently =
+      context.lastNudge?.idempotencyKey === idempotencyKey ||
+      (context.lastNudge?.trigger === "general_checkin" &&
+        isSameDay(context.lastNudge.createdAt, context.localDate));
+
+    if (!alreadySentRecently) {
+      return {
+        shouldSpeak: true,
+        trigger: "general_checkin",
+        priorityScore: 25,
+        idempotencyKey,
+        reason: "Gentle general check-in with the user.",
+        triggerContext: {
+          userName: context.userName,
+        },
+      };
+    }
+  }
+
+  // 20. TRIGGER: user_inactive / long_silence
   if (
     context.minutesSinceLastUserMessage !== null &&
     context.minutesSinceLastUserMessage >= 24 * 60 &&

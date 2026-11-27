@@ -48,6 +48,14 @@ export interface NotificationPreferences {
   learnedWeights: LearnedInterventionWeights;
   strictness?: NikkiStrictness;
   lastSeenAt?: string | null;
+  sleepReminderEnabled?: boolean;
+  sleepReminderSnoozeMinutes?: number;
+  sleepSnoozeUntil?: string | null;
+  sleepDismissedForDate?: string | null;
+  studyRemindersEnabled?: boolean;
+  hobbyRemindersEnabled?: boolean;
+  soundEnabled?: boolean;
+  floatingVisible?: boolean;
 }
 
 export interface CheckInTrigger {

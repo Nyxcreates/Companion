@@ -56,8 +56,17 @@ export interface CompanionDesktopAPI {
   /** Hide the floating Nikki overlay. */
   hideFloatingNikki: () => void;
 
-  /** Open the main Companion conversation window (optionally focused on a nudge). */
-  openMainConversation: (nudgeId?: string) => void;
+  /** Open the main Companion conversation window (optionally focused on a new conversation or nudge). */
+  openMainConversation: (payload?: string | { conversationId?: string; nudgeId?: string }) => void;
+
+  /** Read desktop-specific settings (autoLaunch, floatingVisible). */
+  getDesktopSettings?: () => Promise<{ autoLaunch: boolean; floatingVisible: boolean }>;
+
+  /** Update desktop-specific settings (autoLaunch, floatingVisible). */
+  setDesktopSettings?: (settings: { autoLaunch?: boolean; floatingVisible?: boolean }) => Promise<{ autoLaunch: boolean; floatingVisible: boolean }>;
+
+  /** Listen for main-process requests to open a specific conversationId in the chat UI. */
+  onOpenConversationId?: (callback: (conversationId: string) => void) => () => void;
 
   /** Forward a meaningful nudge from the main window to the floating overlay. */
   forwardNudgeToFloating: (nudge: FloatingNudgePayload) => void;

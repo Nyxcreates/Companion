@@ -58,6 +58,10 @@ let fullscreenDetector = null;
 /** Whether the user genuinely chose "Exit Companion" (vs. window close). */
 let isQuitting = false;
 
+/** Whether the app was launched silently at Windows startup. */
+const isStartupLaunch =
+  process.argv.includes("--startup") || process.argv.includes("--hidden");
+
 /** Whether Nikki overlay is currently shown in the renderer. */
 let nikkiVisible = true;
 
@@ -95,10 +99,21 @@ function createMainWindow() {
 
   mainWindow.loadURL(COMPANION_URL);
 
-  // Show once the page is ready (avoids white flash).
+  mainWindow.webContents.on("did-fail-load", () => {
+    if (isQuitting) return;
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.getURL() === "") {
+        mainWindow.loadURL(COMPANION_URL);
+      }
+    }, 10_000);
+  });
+
+  // Show once the page is ready (unless launched silently on Windows startup).
   mainWindow.once("ready-to-show", () => {
-    mainWindow.show();
-    mainWindow.focus();
+    if (!isStartupLaunch) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
   });
 
   // ── Hide on close (instead of quit) ──────────────────────────────────────
@@ -139,6 +154,7 @@ app.whenReady().then(() => {
       if (trayManager) trayManager.updateMenu();
     },
   });
+  nikkiVisible = floatingManager.visible;
   floatingManager.create();
 
   // Set up system tray
@@ -280,14 +296,20 @@ function getAutoLaunchEnabled() {
   }
 }
 
-function toggleAutoLaunch() {
+function setAutoLaunchEnabled(enabled) {
   try {
-    const next = !getAutoLaunchEnabled();
-    app.setLoginItemSettings({ openAtLogin: next });
+    app.setLoginItemSettings({
+      openAtLogin: Boolean(enabled),
+      args: ["--startup"],
+    });
     if (trayManager) trayManager.updateMenu();
   } catch {
     // Ignore on platforms where login items are unavailable
   }
+}
+
+function toggleAutoLaunch() {
+  setAutoLaunchEnabled(!getAutoLaunchEnabled());
 }
 
 // ── IPC handlers ─────────────────────────────────────────────────────────────
@@ -372,11 +394,48 @@ function registerIPC() {
   ipcMain.on("companion:open-conversation", (_event, payload) => {
     showWindow();
     if (mainWindow && !mainWindow.isDestroyed()) {
+      const conversationId = payload?.conversationId;
       const nudgeId = payload?.nudgeId;
-      const targetUrl = nudgeId
-        ? `${COMPANION_URL.replace(/\/$/, "")}/dashboard?openNikki=${encodeURIComponent(nudgeId)}`
-        : `${COMPANION_URL.replace(/\/$/, "")}/dashboard`;
+      const currentUrl = mainWindow.webContents.getURL() || "";
+
+      if (conversationId && currentUrl.includes("/dashboard")) {
+        mainWindow.webContents.send("companion:open-conversation-id", conversationId);
+        return;
+      }
+
+      const base = COMPANION_URL.replace(/\/$/, "");
+      let targetUrl = `${base}/dashboard`;
+      if (conversationId) {
+        targetUrl = `${base}/dashboard?conversationId=${encodeURIComponent(conversationId)}`;
+      } else if (nudgeId) {
+        targetUrl = `${base}/dashboard?openNikki=${encodeURIComponent(nudgeId)}`;
+      }
       mainWindow.loadURL(targetUrl);
     }
+  });
+
+  ipcMain.handle("companion:get-desktop-settings", () => ({
+    autoLaunch: getAutoLaunchEnabled(),
+    floatingVisible: nikkiVisible,
+  }));
+
+  ipcMain.handle("companion:set-desktop-settings", (_event, settings) => {
+    if (settings && typeof settings.autoLaunch === "boolean") {
+      setAutoLaunchEnabled(settings.autoLaunch);
+    }
+    if (settings && typeof settings.floatingVisible === "boolean") {
+      nikkiVisible = settings.floatingVisible;
+      if (floatingManager) {
+        floatingManager.setVisible(nikkiVisible);
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("companion:nikki-visibility", nikkiVisible);
+      }
+      if (trayManager) trayManager.updateMenu();
+    }
+    return {
+      autoLaunch: getAutoLaunchEnabled(),
+      floatingVisible: nikkiVisible,
+    };
   });
 }

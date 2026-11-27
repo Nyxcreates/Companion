@@ -628,22 +628,41 @@ test("TrayManager supports Start with Windows toggle", () => {
   tm.destroy();
 });
 
-test("Floating route supports inline reply and proactive nudge polling", () => {
+test("Floating route has NO chat input and uses contextual reminder actions", () => {
   const fs = require("fs");
   const source = fs.readFileSync(
     join(__dirname, "..", "src", "app", "desktop", "floating", "page.tsx"),
     "utf8"
   );
-  assert(source.includes("/api/nikki/nudge/reply"), "Should post inline replies to /api/nikki/nudge/reply");
-  assert(source.includes("/api/nikki/nudge"), "Should poll /api/nikki/nudge for proactive check-ins");
-  assert(source.includes("Reply to Nikki..."), "Should render inline reply input");
+  assert(!source.includes("Reply to Nikki..."), "Must NOT render inline reply chat input");
+  assert(!source.includes("<textarea"), "Must NOT render a message composer textarea");
+  assert(source.includes("/api/nikki/nudge/action"), "Should post reminder actions to /api/nikki/nudge/action");
+  assert(source.includes("/api/nikki/nudge?evaluate=1"), "Should poll /api/nikki/nudge?evaluate=1 for proactive reminders");
+  assert(source.includes("Talk to Nikki"), "Should render Talk to Nikki action button");
+  assert(source.includes("I&apos;m going to sleep"), "Should render sleep acknowledgement button");
+  assert(source.includes("Start studying"), "Should render study action button");
+  assert(source.includes("Let&apos;s do it"), "Should render hobby action button");
+  assert(source.includes("Maybe later"), "Should render check-in dismiss button");
 });
 
-test("main.js disables backgroundThrottling and supports setLoginItemSettings", () => {
+test("FloatingManager persists visibility across restarts", () => {
+  const fm = new FloatingManager({ baseUrl: "http://localhost:3000" });
+  fm.create();
+  fm.setVisible(false);
+  assert(fm.store.get("visible") === false, "Should persist visible=false in store");
+  fm.setVisible(true);
+  assert(fm.store.get("visible") === true, "Should persist visible=true in store");
+  fm.destroy();
+});
+
+test("main.js disables backgroundThrottling, supports --startup, and handles did-fail-load", () => {
   const fs = require("fs");
   const source = fs.readFileSync(join(__dirname, "main.js"), "utf8");
   assert(source.includes("backgroundThrottling: false"), "Should keep background timers active when hidden");
   assert(source.includes("setLoginItemSettings"), "Should support Start with Windows via setLoginItemSettings");
+  assert(source.includes("--startup"), "Should support silent --startup launch");
+  assert(source.includes("did-fail-load"), "Should retry loading when offline");
+  assert(source.includes("companion:open-conversation-id"), "Should support opening new conversation directly");
 });
 
 // ── Summary ──────────────────────────────────────────────────────────────────
