@@ -96,7 +96,7 @@ export function getVapidPublicKey(): string {
   return key;
 }
 
-function ensureVapidConfigured(): { ok: true } | { ok: false; reason: string } {
+export function ensureVapidConfigured(): { ok: true } | { ok: false; reason: string } {
   if (vapidConfigured) return { ok: true };
 
   const publicKey = getVapidPublicKey();
