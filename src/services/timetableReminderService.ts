@@ -202,7 +202,23 @@ export async function dispatchDueTimetableReminders(): Promise<{
       continue;
     }
 
-    // 5. Send caring start notification
+    // 5. Atomically claim this pending reminder before sending so concurrent/retried cron runs never duplicate it
+    const claimed = await TimetableReminderModel.findOneAndUpdate(
+      { _id: reminder._id, status: "pending" },
+      {
+        $set: {
+          status: "sent",
+          initialSentAt: now,
+          nudgeAt: new Date(reminder.triggerAt.getTime() + 15 * 60 * 1000),
+        },
+      },
+      { new: true }
+    );
+    if (!claimed) {
+      continue;
+    }
+
+    // 6. Send caring start notification
     const companionName = user?.companionName || "Nikki";
     const userName = user?.displayName?.trim() || "friend";
     const body =
@@ -216,6 +232,7 @@ export async function dispatchDueTimetableReminders(): Promise<{
       url: "/plan?tab=schedule",
       category,
       tag: `timetable-${reminder.uniqueKey}`,
+      userTimezone: tz,
       actions: [
         { action: "start", title: "Starting now" },
         { action: "later", title: "Later" },
@@ -241,10 +258,6 @@ export async function dispatchDueTimetableReminders(): Promise<{
       metadata: { reminderId: String(reminder._id), uniqueKey: reminder.uniqueKey },
     });
 
-    reminder.status = "sent";
-    reminder.initialSentAt = now;
-    reminder.nudgeAt = new Date(reminder.triggerAt.getTime() + 15 * 60 * 1000);
-    await reminder.save();
     initialRemindersSent++;
   }
 
@@ -296,6 +309,26 @@ export async function dispatchDueTimetableReminders(): Promise<{
       continue;
     }
 
+    const nextNudgesSent = reminder.nudgesSent + 1;
+    const nextNudgeAt =
+      nextNudgesSent >= allowedNudges ? null : new Date(now.getTime() + 15 * 60 * 1000);
+
+    // Atomically claim this follow-up nudge before sending
+    const claimedNudge = await TimetableReminderModel.findOneAndUpdate(
+      { _id: reminder._id, status: "sent", nudgeAt: reminder.nudgeAt },
+      {
+        $set: {
+          nudgesSent: nextNudgesSent,
+          lastNudgeAt: now,
+          nudgeAt: nextNudgeAt,
+        },
+      },
+      { new: true }
+    );
+    if (!claimedNudge) {
+      continue;
+    }
+
     const companionName = user?.companionName || "Nikki";
     const userName = user?.displayName?.trim() || "friend";
     const nudgeBody = `Hey ${userName}, '${reminder.itemTitle}' started 15 minutes ago. Want to begin now or move it?`;
@@ -306,6 +339,7 @@ export async function dispatchDueTimetableReminders(): Promise<{
       url: "/plan?tab=schedule",
       category,
       tag: `timetable-nudge-${reminder.uniqueKey}`,
+      userTimezone: tz,
       actions: [
         { action: "start", title: "Starting now" },
         { action: "later", title: "Later" },
@@ -330,17 +364,6 @@ export async function dispatchDueTimetableReminders(): Promise<{
       metadata: { reminderId: String(reminder._id), uniqueKey: reminder.uniqueKey, isNudge: true },
     });
 
-    reminder.nudgesSent += 1;
-    reminder.lastNudgeAt = now;
-
-    // Back off: if reached limit, stop nudges; otherwise schedule next 15m check
-    if (reminder.nudgesSent >= allowedNudges) {
-      reminder.nudgeAt = null;
-    } else {
-      reminder.nudgeAt = new Date(now.getTime() + 15 * 60 * 1000);
-    }
-
-    await reminder.save();
     nudgesSent++;
   }
 

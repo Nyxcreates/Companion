@@ -14,6 +14,7 @@ import { ScheduleModel } from "@/models/Schedule";
 import { FocusSessionModel } from "@/models/FocusSession";
 import { EmotionModel } from "@/models/Emotion";
 import { sendPushToUser } from "@/lib/pushService";
+import { claimNotificationIdempotency } from "@/models/NotificationIdempotency";
 import type { NotificationItem, NotificationPreferences, CheckInTrigger } from "@/types/notification";
 
 export async function createNotification(data: {
@@ -445,7 +446,7 @@ export async function evaluateProactiveContext(
             createdAt: { $gte: new Date(now.getTime() - 90 * 60 * 1000) },
           });
 
-          if (!recentNotif) {
+          if (!recentNotif && await claimNotificationIdempotency(`${firebaseUid}:upcoming:${todayStr}:${item.title}`, firebaseUid, "proactive", 90 * 60 * 1000)) {
             const isCollegeOrClass = /college|class|lecture|exam|uni|school/.test(lowerTitle);
             const msg = isCollegeOrClass
               ? "Heyyy, your college starts soon. Go get ready! Have you had breakfast?"
@@ -458,6 +459,7 @@ export async function evaluateProactiveContext(
               body: msg,
               actionUrl: "/plan?tab=schedule",
               actionLabel: "View Timetable",
+              userTimezone,
               metadata: { itemTitle: item.title, date: todayStr },
             });
             newNotificationsCount++;
@@ -495,7 +497,7 @@ export async function evaluateProactiveContext(
             createdAt: { $gte: new Date(now.getTime() - 60 * 60 * 1000) },
           });
 
-          if (!recentDepNotif) {
+          if (!recentDepNotif && await claimNotificationIdempotency(`${firebaseUid}:departure:${todayStr}:${item.title}`, firebaseUid, "proactive", 60 * 60 * 1000)) {
             const depMsg = `You should probably leave in ${diffBeforeStart} minutes for ${item.title}. Don't forget your bag and essentials!`;
             await createNotification({
               firebaseUid,
@@ -504,6 +506,7 @@ export async function evaluateProactiveContext(
               body: depMsg,
               actionUrl: "/plan?tab=schedule",
               actionLabel: "View Schedule",
+              userTimezone,
               metadata: { itemTitle: item.title, date: todayStr },
             });
             newNotificationsCount++;
@@ -537,7 +540,7 @@ export async function evaluateProactiveContext(
               createdAt: { $gte: new Date(now.getTime() - 60 * 60 * 1000) },
             });
 
-            if (!recentStudyNotif) {
+            if (!recentStudyNotif && await claimNotificationIdempotency(`${firebaseUid}:study:${todayStr}:${item.title}`, firebaseUid, "proactive", 60 * 60 * 1000)) {
               const studyMsg = `Okay, time for your study block: "${item.title}". Let's tackle one thing at a time.`;
               await createNotification({
                 firebaseUid,
@@ -546,6 +549,7 @@ export async function evaluateProactiveContext(
                 body: studyMsg,
                 actionUrl: "/focus",
                 actionLabel: "Start Focus",
+                userTimezone,
                 metadata: { itemTitle: item.title, date: todayStr },
               });
               newNotificationsCount++;
@@ -579,7 +583,7 @@ export async function evaluateProactiveContext(
             createdAt: { $gte: new Date(now.getTime() - 120 * 60 * 1000) },
           });
 
-          if (!recentReturn) {
+          if (!recentReturn && await claimNotificationIdempotency(`${firebaseUid}:return:${todayStr}:${item.title}`, firebaseUid, "proactive", 120 * 60 * 1000)) {
             const returnMsg = `You're back! How was ${item.title.toLowerCase()} today? Take a breather and grab some water.`;
             await createNotification({
               firebaseUid,
@@ -588,6 +592,7 @@ export async function evaluateProactiveContext(
               body: returnMsg,
               actionUrl: "/dashboard",
               actionLabel: "Tell Nikki",
+              userTimezone,
               metadata: { returnFrom: item.title, date: todayStr },
             });
             newNotificationsCount++;
@@ -615,7 +620,7 @@ export async function evaluateProactiveContext(
   }
 
     // E. Morning Overview (06:00 to 11:30)
-    if (localHour >= 6 && localHour < 12 && !activeCheckIn) {
+    if (localHour >= 6 && localHour < 12 && !activeCheckIn && !inQuietHours) {
       const morningNotif = await NotificationModel.findOne({
         firebaseUid,
         category: "timetable_reminder",
@@ -623,7 +628,7 @@ export async function evaluateProactiveContext(
         createdAt: { $gte: new Date(now.getTime() - 10 * 60 * 60 * 1000) },
       });
 
-      if (!morningNotif) {
+      if (!morningNotif && await claimNotificationIdempotency(`${firebaseUid}:morning_overview:${todayStr}`, firebaseUid, "proactive", 10 * 60 * 60 * 1000)) {
         const count = todaySchedule?.items?.length ?? 0;
         const morningMsg = count > 0
           ? `Good morninggg! You're up! You have ${count} ${count === 1 ? "activity" : "activities"} planned on your timetable.`
@@ -636,6 +641,7 @@ export async function evaluateProactiveContext(
           body: morningMsg,
           actionUrl: "/plan?tab=schedule",
           actionLabel: count > 0 ? "Open Schedule" : "Plan Today",
+          userTimezone,
           metadata: { type: "morning_overview", date: todayStr },
         });
         newNotificationsCount++;
@@ -659,7 +665,7 @@ export async function evaluateProactiveContext(
     }
 
     // F. Evening Reflection (18:00 to 22:30)
-    if (localHour >= 18 && localHour < 23 && !activeCheckIn) {
+    if (localHour >= 18 && localHour < 23 && !activeCheckIn && !inQuietHours) {
       const eveningNotif = await NotificationModel.findOne({
         firebaseUid,
         category: "nikki_supportive",
@@ -667,7 +673,7 @@ export async function evaluateProactiveContext(
         createdAt: { $gte: new Date(now.getTime() - 8 * 60 * 60 * 1000) },
       });
 
-      if (!eveningNotif) {
+      if (!eveningNotif && await claimNotificationIdempotency(`${firebaseUid}:evening_reflection:${todayStr}`, firebaseUid, "proactive", 8 * 60 * 60 * 1000)) {
         const eveningMsg = "How did today go? Did everything work out with your plan?";
         await createNotification({
           firebaseUid,
@@ -676,6 +682,7 @@ export async function evaluateProactiveContext(
           body: eveningMsg,
           actionUrl: "/dashboard",
           actionLabel: "Tell Nikki",
+          userTimezone,
           metadata: { type: "evening_reflection", date: todayStr },
         });
         newNotificationsCount++;
@@ -707,7 +714,7 @@ export async function evaluateProactiveContext(
         createdAt: { $gte: new Date(now.getTime() - 7 * 60 * 60 * 1000) },
       });
 
-      if (!lateNotif) {
+      if (!lateNotif && !inQuietHours && await claimNotificationIdempotency(`${firebaseUid}:late_night:${todayStr}`, firebaseUid, "proactive", 7 * 60 * 60 * 1000)) {
         const lateMsg = "Still awake? Hehe. How did today go? Don't stay up too late, moon. 🌙";
         await createNotification({
           firebaseUid,
@@ -716,6 +723,7 @@ export async function evaluateProactiveContext(
           body: lateMsg,
           actionUrl: "/dashboard",
           actionLabel: "Chat with Nikki",
+          userTimezone,
           metadata: { type: "late_night_winddown", date: todayStr },
         });
         newNotificationsCount++;
@@ -757,7 +765,7 @@ export async function evaluateProactiveContext(
         createdAt: { $gte: new Date(now.getTime() - 6 * 60 * 60 * 1000) },
       });
 
-      if (!recentNotif) {
+      if (!recentNotif && await claimNotificationIdempotency(`${firebaseUid}:task:${String(task._id)}:${todayStr}`, firebaseUid, "proactive", 6 * 60 * 60 * 1000)) {
         const isOverdue = task.dueDate && task.dueDate < now;
         await createNotification({
           firebaseUid,
@@ -768,6 +776,7 @@ export async function evaluateProactiveContext(
             : `You have "${task.title}" coming up. Want to work on it now?`,
           actionUrl: "/plan",
           actionLabel: "View Task",
+          userTimezone,
           metadata: { taskId: String(task._id) },
         });
         newNotificationsCount++;
@@ -811,7 +820,7 @@ export async function evaluateProactiveContext(
         createdAt: { $gte: new Date(now.getTime() - 12 * 60 * 60 * 1000) },
       });
 
-      if (!recentNotif) {
+      if (!recentNotif && await claimNotificationIdempotency(`${firebaseUid}:goal:${String(goal._id)}:${todayStr}`, firebaseUid, "proactive", 12 * 60 * 60 * 1000)) {
         await createNotification({
           firebaseUid,
           category: "goal_deadline",
@@ -819,6 +828,7 @@ export async function evaluateProactiveContext(
           body: `Your milestone deadline is approaching. Keep going—you've made meaningful progress!`,
           actionUrl: "/plan",
           actionLabel: "Review Goal",
+          userTimezone,
           metadata: { goalId: String(goal._id) },
         });
         newNotificationsCount++;

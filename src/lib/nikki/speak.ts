@@ -81,16 +81,25 @@ export async function speakNikkiNudge(
     messageText = getPersonaFallbackMessage(context, decision, recentMessagesSet);
   }
 
-  // Persist NikkiNudge document
-  const nudge = await NikkiNudgeModel.create({
-    firebaseUid: context.firebaseUid,
-    trigger: decision.trigger,
-    message: messageText,
-    status: "created",
-    idempotencyKey: decision.idempotencyKey,
-    strictness: context.strictness,
-    metadata: decision.triggerContext || {},
-  });
+  // Persist NikkiNudge document atomically (unique idempotencyKey prevents concurrent duplicates)
+  let nudge: NikkiNudgeDocument;
+  try {
+    nudge = await NikkiNudgeModel.create({
+      firebaseUid: context.firebaseUid,
+      trigger: decision.trigger,
+      message: messageText,
+      status: "created",
+      idempotencyKey: decision.idempotencyKey,
+      strictness: context.strictness,
+      metadata: decision.triggerContext || {},
+    });
+  } catch (err: unknown) {
+    const mongoErr = err as { code?: number };
+    if (mongoErr?.code === 11000) {
+      return null;
+    }
+    throw err;
+  }
 
   // Reuse existing notification & push system
   try {

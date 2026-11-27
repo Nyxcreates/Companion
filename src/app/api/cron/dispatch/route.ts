@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { verifyCronAuth } from "@/lib/api/verifyCronAuth";
 import { dispatchDueTimetableReminders } from "@/services/timetableReminderService";
 import { dispatchDueBreaks } from "@/services/breakSessionService";
 
@@ -16,16 +17,8 @@ export const runtime = "nodejs";
  */
 export async function GET(request: NextRequest) {
   try {
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret) {
-      const authHeader = request.headers.get("authorization");
-      const urlKey = request.nextUrl.searchParams.get("key");
-      const isAuthorized =
-        authHeader === `Bearer ${cronSecret}` || urlKey === cronSecret;
-
-      if (!isAuthorized) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
+    if (!verifyCronAuth(request)) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const [timetableResult, breakResult] = await Promise.all([

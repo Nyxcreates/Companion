@@ -180,6 +180,16 @@ export async function dispatchDueBreaks(): Promise<{
       continue;
     }
 
+    // Atomically claim before sending so concurrent/retried cron runs never duplicate it
+    const claimedBreak = await BreakSessionModel.findOneAndUpdate(
+      { _id: session._id, status: "active", endNotificationSent: false },
+      { $set: { endNotificationSent: true } },
+      { new: true }
+    );
+    if (!claimedBreak) {
+      continue;
+    }
+
     const displayName = user?.displayName || "there";
     const nextTask    = session.nextTaskTitle;
     const title  = "Break's over! 🌟";
@@ -193,6 +203,7 @@ export async function dispatchDueBreaks(): Promise<{
       url:      "/plan?tab=schedule",
       tag:      `break-end-${String(session._id)}`,
       category: "break_reminder",
+      userTimezone: tz,
       actions: [
         { action: "break-back",   title: "Back to it 💪" },
         { action: "break-extend", title: "5 more minutes" },
@@ -200,8 +211,6 @@ export async function dispatchDueBreaks(): Promise<{
       data: { breakSessionId: String(session._id) },
     });
 
-    session.endNotificationSent = true;
-    await session.save();
     endNotificationsSent++;
   }
 
@@ -240,6 +249,16 @@ export async function dispatchDueBreaks(): Promise<{
       continue;
     }
 
+    // Atomically claim before sending so concurrent/retried cron runs never duplicate it
+    const claimedExtension = await BreakSessionModel.findOneAndUpdate(
+      { _id: session._id, status: "extended", endNotificationSent: false },
+      { $set: { endNotificationSent: true, status: "ended" } },
+      { new: true }
+    );
+    if (!claimedExtension) {
+      continue;
+    }
+
     const displayName = user?.displayName || "there";
     const nextTask    = session.nextTaskTitle;
     const title  = "Still here with you 💙";
@@ -253,15 +272,13 @@ export async function dispatchDueBreaks(): Promise<{
       url:      "/plan?tab=schedule",
       tag:      `break-extension-end-${String(session._id)}`,
       category: "break_reminder",
+      userTimezone: tz,
       actions: [
         { action: "break-back", title: "Let's go! 🚀" },
       ],
       data: { breakSessionId: String(session._id) },
     });
 
-    session.endNotificationSent = true;
-    session.status = "ended";
-    await session.save();
     extensionEndNotificationsSent++;
   }
 
