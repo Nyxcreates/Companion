@@ -3,6 +3,22 @@ import { connectToDatabase } from "@/lib/mongodb";
 import { PushSubscriptionModel } from "@/models/PushSubscription";
 import { NotificationPreferenceModel } from "@/models/NotificationPreference";
 import type { NotificationCategory } from "@/lib/notifications/categories";
+import {
+  cleanEnvValue,
+  normalizeVapidSubject,
+  getVapidPublicKey,
+  validateVapidKeyPair,
+  getVapidDiagnostics as getDiagnostics,
+  type VapidDiagnostics,
+} from "./vapidKeyValidation";
+
+export {
+  cleanEnvValue,
+  normalizeVapidSubject,
+  getVapidPublicKey,
+  validateVapidKeyPair,
+  type VapidDiagnostics,
+};
 
 /** Returns true if the current time (in the given IANA timezone) is within quiet hours. */
 function isWithinQuietHours(
@@ -70,30 +86,8 @@ export interface PushDeliveryResult {
 
 let vapidConfigured = false;
 
-function cleanEnvValue(raw: string | undefined): string {
-  if (!raw) return "";
-  return raw.trim().replace(/^['"]|['"]$/g, "").trim();
-}
-
-function normalizeVapidSubject(raw: string | undefined): string {
-  const cleaned = cleanEnvValue(raw);
-  if (!cleaned) return "mailto:companion@app.internal";
-  if (/^(mailto:|https?:\/\/)/i.test(cleaned)) return cleaned;
-  if (cleaned.includes("@")) return `mailto:${cleaned}`;
-  return cleaned;
-}
-
-export function getVapidPublicKey(): string {
-  const key =
-    cleanEnvValue(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) ||
-    cleanEnvValue(process.env.VAPID_PUBLIC_KEY);
-  if (!key) {
-    console.warn(
-      "[Companion pushService] NEXT_PUBLIC_VAPID_PUBLIC_KEY is not set. " +
-      "Generate keys with: npx web-push generate-vapid-keys"
-    );
-  }
-  return key;
+export function getVapidDiagnostics(): VapidDiagnostics {
+  return getDiagnostics(vapidConfigured);
 }
 
 export function ensureVapidConfigured(): { ok: true } | { ok: false; reason: string } {
@@ -129,6 +123,15 @@ export function ensureVapidConfigured(): { ok: true } | { ok: false; reason: str
       ok: false,
       reason:
         "VAPID_NOT_CONFIGURED: Missing VAPID_PRIVATE_KEY in server runtime. Redeploy after saving Vercel env vars.",
+    };
+  }
+
+  const keyPairCheck = validateVapidKeyPair(publicKey, privateKey);
+  if (!keyPairCheck.valid) {
+    console.warn(`[Companion pushService] VAPID key mismatch: ${keyPairCheck.error}`);
+    return {
+      ok: false,
+      reason: `VAPID_NOT_CONFIGURED: ${keyPairCheck.error} Ensure both keys from the same generated pair are added to Vercel.`,
     };
   }
 

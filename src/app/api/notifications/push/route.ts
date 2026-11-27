@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUser, ApiAuthError } from "@/lib/api/requireUser";
 import { connectToDatabase } from "@/lib/mongodb";
 import { PushSubscriptionModel } from "@/models/PushSubscription";
-import { ensureVapidConfigured, getVapidPublicKey } from "@/lib/pushService";
+import {
+  ensureVapidConfigured,
+  getVapidPublicKey,
+  getVapidDiagnostics,
+} from "@/lib/pushService";
 
 export const runtime = "nodejs";
 
@@ -10,6 +14,7 @@ export async function GET(request: NextRequest) {
   try {
     const publicKey = getVapidPublicKey();
     const vapidCheck = ensureVapidConfigured();
+    const diagnostics = getVapidDiagnostics();
 
     // Optionally check if the user is authenticated and has existing active subscriptions
     let hasActiveSubscription = false;
@@ -32,6 +37,12 @@ export async function GET(request: NextRequest) {
         isConfigured: vapidCheck.ok,
         serverKeysConfigured: Boolean(process.env.VAPID_PRIVATE_KEY),
         configReason: vapidCheck.ok ? undefined : vapidCheck.reason,
+        diagnostics: {
+          hasPublicKey: diagnostics.hasPublicKey,
+          hasPrivateKey: diagnostics.hasPrivateKey,
+          hasSubject: diagnostics.hasSubject,
+          keysMatch: diagnostics.keysMatch,
+        },
         hasActiveSubscription,
         subscriptionCount,
       },

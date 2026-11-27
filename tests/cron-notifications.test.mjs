@@ -2,11 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { generateVAPIDKeys } from "web-push";
 import { verifyCronBearerToken } from "../src/lib/api/verifyCronAuth.ts";
 import {
   claimNotificationIdempotency,
   NotificationIdempotencyModel,
 } from "../src/models/NotificationIdempotency.ts";
+import {
+  validateVapidKeyPair,
+  getVapidDiagnostics,
+} from "../src/lib/vapidKeyValidation.ts";
 
 test("vercel.json does not contain incompatible Hobby cron schedules", () => {
   const raw = fs.readFileSync(path.join(process.cwd(), "vercel.json"), "utf8");
@@ -27,6 +32,49 @@ test("verifyCronBearerToken rejects missing, empty, or malformed secrets", () =>
 test("verifyCronBearerToken accepts exact Bearer CRON_SECRET match", () => {
   assert.equal(verifyCronBearerToken("Bearer super-secret-123", "super-secret-123"), true);
   assert.equal(verifyCronBearerToken("bearer super-secret-123", "super-secret-123"), true);
+});
+
+test("validateVapidKeyPair correctly validates matching and mismatching keypairs", () => {
+  const pairA = generateVAPIDKeys();
+  const pairB = generateVAPIDKeys();
+
+  // Valid pair from same generation
+  const matchResult = validateVapidKeyPair(pairA.publicKey, pairA.privateKey);
+  assert.equal(matchResult.valid, true);
+
+  // Mismatched keys from different generations
+  const mismatchResult = validateVapidKeyPair(pairA.publicKey, pairB.privateKey);
+  assert.equal(mismatchResult.valid, false);
+  assert.match(mismatchResult.error, /do not belong to the same keypair/i);
+
+  // Malformed lengths
+  const malformed = validateVapidKeyPair("not-a-valid-key", pairA.privateKey);
+  assert.equal(malformed.valid, false);
+});
+
+test("getVapidDiagnostics reports presence and match status without leaking private key", () => {
+  const origPub = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+  const origPriv = process.env.VAPID_PRIVATE_KEY;
+  const origSub = process.env.VAPID_SUBJECT;
+
+  try {
+    const pair = generateVAPIDKeys();
+    process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY = pair.publicKey;
+    process.env.VAPID_PRIVATE_KEY = pair.privateKey;
+    process.env.VAPID_SUBJECT = "mailto:test@example.com";
+
+    const diag = getVapidDiagnostics();
+    assert.equal(diag.hasPublicKey, true);
+    assert.equal(diag.hasPrivateKey, true);
+    assert.equal(diag.hasSubject, true);
+    assert.equal(diag.keysMatch, true);
+    // Ensure no private key string leaked in diagnostics object
+    assert.equal("privateKey" in diag, false);
+  } finally {
+    process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY = origPub;
+    process.env.VAPID_PRIVATE_KEY = origPriv;
+    process.env.VAPID_SUBJECT = origSub;
+  }
 });
 
 test("claimNotificationIdempotency allows first claim and blocks concurrent/duplicate claims", async () => {
