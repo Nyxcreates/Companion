@@ -307,40 +307,49 @@ export default function FloatingNikkiPage() {
 
       try {
         if (!firebaseUser) {
-          window.companionDesktop?.openMainConversation({ nudgeId: nudge?.id });
+          if (window.companionDesktop?.openMainConversation) {
+            window.companionDesktop.openMainConversation({ nudgeId: nudge?.id });
+          } else {
+            window.open("/dashboard", "_blank");
+          }
           setNudge(null);
           return;
         }
 
-        const res = await authFetch("/api/nikki/nudge/action", {
-          method: "POST",
-          body: JSON.stringify({
-            action: "talk",
-            nudgeId: nudge?.id || undefined,
-            trigger: nudge?.trigger || "general_checkin",
-            message: nudge?.message || undefined,
-            metadata: nudge?.metadata || {},
-            timezone: getTimezone(),
-          }),
-        });
-        const json = await res.json();
-        if (!res.ok || !json?.data?.conversationId) {
-          throw new Error(json?.error?.message || "Couldn't start conversation.");
+        let conversationId: string | undefined;
+        try {
+          const res = await authFetch("/api/nikki/nudge/action", {
+            method: "POST",
+            body: JSON.stringify({
+              action: "talk",
+              nudgeId: nudge?.id || undefined,
+              trigger: nudge?.trigger || "general_checkin",
+              message: nudge?.message || undefined,
+              metadata: nudge?.metadata || {},
+              timezone: getTimezone(),
+            }),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (res.ok && json?.data?.conversationId) {
+            conversationId = json.data.conversationId as string;
+          }
+        } catch {
+          // Fall back to opening the existing Companion chat page directly
         }
 
-        const conversationId = json.data.conversationId as string;
         setNudge(null);
 
         if (window.companionDesktop?.openMainConversation) {
           window.companionDesktop.openMainConversation({
-            conversationId,
+            conversationId: conversationId || undefined,
             nudgeId: nudge?.id,
           });
         } else {
-          window.open(`/dashboard?conversationId=${encodeURIComponent(conversationId)}`, "_blank");
+          const target = conversationId
+            ? `/dashboard?conversationId=${encodeURIComponent(conversationId)}`
+            : "/dashboard";
+          window.open(target, "_blank");
         }
-      } catch (err) {
-        setActionError(err instanceof Error ? err.message : "Could not open conversation.");
       } finally {
         setIsActing(false);
       }
@@ -705,6 +714,15 @@ export default function FloatingNikkiPage() {
               <WifiOff className="h-3 w-3" />
             </span>
           )}
+          <button
+            type="button"
+            onClick={handleTalkToNikki}
+            title="Talk to Nikki (open Companion chat)"
+            className="inline-flex items-center gap-1 rounded-full bg-violet-500/80 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-violet-500"
+          >
+            <MessageCircle className="h-2.5 w-2.5" />
+            Talk
+          </button>
           <button
             type="button"
             onClick={handleToggleMinimize}

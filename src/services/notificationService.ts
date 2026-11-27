@@ -47,8 +47,9 @@ export async function createNotification(data: {
     metadata: data.metadata,
   });
 
-  // Proactively deliver via Web Push in background
-  sendPushToUser(data.firebaseUid, {
+  // Await Web Push dispatch so serverless cron functions don't terminate
+  // before web-push completes delivery.
+  await sendPushToUser(data.firebaseUid, {
     title: data.title,
     body: data.body,
     url: data.actionUrl || "/dashboard",
@@ -57,7 +58,7 @@ export async function createNotification(data: {
     userTimezone: data.userTimezone,
     bypassQuietHours: data.bypassQuietHours,
   }).catch((err) => {
-    console.warn("[Companion Notification] Background push dispatch error:", err);
+    console.warn("[Companion Notification] Push dispatch error:", err);
   });
 
   return notif;

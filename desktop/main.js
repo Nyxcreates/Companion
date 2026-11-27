@@ -22,9 +22,30 @@ const { FullscreenDetector } = require("./fullscreen");
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
-/** The URL to load in the main window. Defaults to production. */
-const COMPANION_URL =
+/** The URL to load in the main window. Defaults to production, with automatic local fallback if unreachable/404. */
+let COMPANION_URL =
   process.env.COMPANION_URL || "https://companion-app-pi-seven.vercel.app";
+
+async function resolveCompanionUrl() {
+  if (process.env.COMPANION_URL) {
+    return process.env.COMPANION_URL;
+  }
+  const prodUrl = "https://companion-app-pi-seven.vercel.app";
+  const localUrl = "http://localhost:3000";
+  try {
+    const res = await fetch(`${prodUrl}/api/health`, { method: "GET" });
+    if (res.ok) return prodUrl;
+  } catch {
+    // Production unreachable; try local server
+  }
+  try {
+    const localRes = await fetch(`${localUrl}/api/health`, { method: "GET" });
+    if (localRes.ok) return localUrl;
+  } catch {
+    // Local server not running either; keep prodUrl
+  }
+  return prodUrl;
+}
 
 /** Minimum window dimensions */
 const MIN_WIDTH = 420;
@@ -142,7 +163,8 @@ function createMainWindow() {
 
 // ── App lifecycle ────────────────────────────────────────────────────────────
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  COMPANION_URL = await resolveCompanionUrl();
   createMainWindow();
 
   // Set up floating Nikki overlay (Part 5C)
@@ -395,21 +417,19 @@ function registerIPC() {
     showWindow();
     if (mainWindow && !mainWindow.isDestroyed()) {
       const conversationId = payload?.conversationId;
-      const nudgeId = payload?.nudgeId;
       const currentUrl = mainWindow.webContents.getURL() || "";
 
-      if (conversationId && currentUrl.includes("/dashboard")) {
-        mainWindow.webContents.send("companion:open-conversation-id", conversationId);
+      if (currentUrl.includes("/dashboard")) {
+        if (conversationId) {
+          mainWindow.webContents.send("companion:open-conversation-id", conversationId);
+        }
         return;
       }
 
       const base = COMPANION_URL.replace(/\/$/, "");
-      let targetUrl = `${base}/dashboard`;
-      if (conversationId) {
-        targetUrl = `${base}/dashboard?conversationId=${encodeURIComponent(conversationId)}`;
-      } else if (nudgeId) {
-        targetUrl = `${base}/dashboard?openNikki=${encodeURIComponent(nudgeId)}`;
-      }
+      const targetUrl = conversationId
+        ? `${base}/dashboard?conversationId=${encodeURIComponent(conversationId)}`
+        : `${base}/dashboard`;
       mainWindow.loadURL(targetUrl);
     }
   });

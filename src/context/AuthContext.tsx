@@ -30,11 +30,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
 
       if (user) {
-        // Ensures a bare MongoDB profile exists for this Firebase UID.
-        // Never overwrites onboarding data on returning users — see
-        // /api/auth/sync. Failure here is non-fatal: ProfileContext's
-        // own fetch will simply find nothing yet and route to onboarding.
-        authFetch("/api/auth/sync", { method: "POST" }).catch(() => {});
+        // Ensures a bare MongoDB profile exists for this Firebase UID and syncs
+        // the browser's IANA timezone if not yet saved.
+        let browserTz: string | undefined;
+        try {
+          browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+        } catch {}
+        authFetch("/api/auth/sync", {
+          method: "POST",
+          body: JSON.stringify({ timezone: browserTz }),
+        }).catch(() => {});
       }
     });
 
