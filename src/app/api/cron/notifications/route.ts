@@ -24,7 +24,12 @@ export const dynamic = "force-dynamic";
  * - Safe to call repeatedly or concurrently; persistent MongoDB idempotency
  *   prevents duplicate deliveries even after timeouts or retries.
  * - Returns compact aggregate counts with zero private user data.
+ * - Also supports GET for quick health checks (same auth required).
  */
+export async function GET(request: NextRequest) {
+  return POST(request);
+}
+
 export async function POST(request: NextRequest) {
   if (!verifyCronAuth(request)) {
     return NextResponse.json(
@@ -46,6 +51,8 @@ export async function POST(request: NextRequest) {
     let evaluatedUsers = 0;
     let notificationsGenerated = 0;
     let nikkiNudgesSent = 0;
+    let pausedUsers = 0;
+    let autoResumedUsers = 0;
 
     for (const uid of subscribedUids) {
       try {
@@ -57,8 +64,27 @@ export async function POST(request: NextRequest) {
         if (prefs?.proactiveEnabled === false) {
           continue;
         }
-        if (prefs?.pausedUntil && new Date(prefs.pausedUntil) > now) {
-          continue;
+
+        // Auto-clear expired pausedUntil from MongoDB to keep the DB clean
+        if (prefs?.pausedUntil) {
+          const pausedUntilDate = new Date(prefs.pausedUntil);
+          if (pausedUntilDate > now) {
+            // Still paused — log remaining time for diagnostics (no PII)
+            const minutesRemaining = Math.ceil((pausedUntilDate.getTime() - now.getTime()) / 60000);
+            console.log(
+              `[Companion Cron] User paused — skipping. Resumes in ~${minutesRemaining} min.`
+            );
+            pausedUsers++;
+            continue;
+          } else {
+            // Pause has expired — clear it from DB so future reads are clean
+            prefs.pausedUntil = null;
+            await prefs.save().catch((e: unknown) =>
+              console.warn("[Companion Cron] Failed to clear expired pausedUntil:", e)
+            );
+            autoResumedUsers++;
+            console.log("[Companion Cron] Auto-resumed user (expired pause cleared).");
+          }
         }
 
         evaluatedUsers++;
@@ -93,10 +119,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    console.log(
+      `[Companion Cron] Run complete — evaluated:${evaluatedUsers} paused:${pausedUsers} autoResumed:${autoResumedUsers} nudgesSent:${nikkiNudgesSent}`
+    );
+
     return NextResponse.json({
       data: {
         ok: true,
         evaluatedUsers,
+        pausedUsers,
+        autoResumedUsers,
         notificationsGenerated,
         nikkiNudgesSent,
         timetableRemindersSent: timetableResult.initialRemindersSent,
