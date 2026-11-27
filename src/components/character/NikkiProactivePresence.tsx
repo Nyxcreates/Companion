@@ -11,7 +11,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Sparkles, MessageCircle, X, Minimize2, Move, Coffee, Mic, MicOff, Send, BellOff } from "lucide-react";
+import { Sparkles, MessageCircle, X, Minimize2, Move, Coffee } from "lucide-react";
 import { useNotifications } from "@/context/NotificationContext";
 import { useProfile } from "@/context/ProfileContext";
 import { useAuth } from "@/context/AuthContext";
@@ -413,14 +413,6 @@ export function NikkiProactivePresence() {
 
   // ── Conversational Presence & Nikki Nudge State ───────────────────────────
   const [activeNudge, setActiveNudge] = useState<FloatingNudgeState | null>(null);
-  const [isConversationalOpen, setIsConversationalOpen] = useState(false);
-  const [bubbleConversation, setBubbleConversation] = useState<FloatingBubbleMessage[]>([]);
-  const [inputText, setInputText] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [isTtsEnabled, setIsTtsEnabled] = useState(false);
-  const bubbleEndRef = useRef<HTMLDivElement>(null);
-  const recognitionRef = useRef<any>(null);
 
   // Restore minimized state from this browser session
   useEffect(() => {
@@ -542,40 +534,16 @@ export function NikkiProactivePresence() {
             new CustomEvent("companion:nudge-received", { detail: env.data })
           );
         } catch {}
-        // Only open/reset the bubble if it isn't already in an active conversation
-        setBubbleConversation((prev) => {
-          if (prev.length > 0 && isConversationalOpen) {
-            // Append the new nudge as a Nikki message to ongoing conversation
-            return [...prev, { id: env.data.id, role: "nikki" as const, content: env.data.message }];
-          }
-          return [{ id: env.data.id, role: "nikki" as const, content: env.data.message }];
-        });
-        setIsConversationalOpen(true);
         setIsMinimized(false);
       }
     } catch {
       /* best-effort */
     }
-  }, [firebaseUser, isConversationalOpen]);
+  }, [firebaseUser]);
 
   useEffect(() => {
     if (!firebaseUser) return;
     fetchPendingNudge();
-
-    // Check URL param ?openNikki=... on mount (e.g. from push click)
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const openNikkiParam = params.get("openNikki");
-      if (openNikkiParam) {
-        setIsConversationalOpen(true);
-        setIsMinimized(false);
-        fetchPendingNudge();
-        try {
-          const cleanUrl = window.location.pathname;
-          window.history.replaceState({}, "", cleanUrl);
-        } catch {}
-      }
-    }
 
     const interval = setInterval(fetchPendingNudge, 60_000);
 
@@ -810,176 +778,9 @@ export function NikkiProactivePresence() {
     authFetch("/api/schedule/break", { method: "DELETE" }).catch(() => {});
   }, [firebaseUser]);
 
-  // ── Conversational Presence Handlers ───────────────────────────────────────
-  const quickReplyChips = useMemo(() => {
-    const trigger = activeNudge?.trigger;
-    if (trigger === "timetable_unstarted") {
-      return ["Starting now 💪", "Move 15m", "Skip today"];
-    }
-    if (trigger === "morning_plan") {
-      return ["Got my water! 💧", "Ready to plan", "Taking it slow"];
-    }
-    if (trigger === "no_timetable") {
-      return ["Let's make a plan", "Free day today"];
-    }
-    if (trigger === "mood_followup") {
-      return ["Feeling a bit better", "Still overwhelmed", "Just resting"];
-    }
-    if (trigger === "late_night") {
-      return ["Heading to bed 🌙", "Just 5 more minutes"];
-    }
-    if (trigger === "long_session") {
-      return ["Taking a break", "Finishing one thing"];
-    }
-    if (trigger === "task_overdue") {
-      return ["Starting right now 💪", "Break it into smaller steps", "Reschedule to tomorrow", "I actually completed it!"];
-    }
-    if (trigger === "long_silence") {
-      return ["Doing well!", "Missed you!"];
-    }
-    if (trigger === "goal_neglected") {
-      return ["Let's work on it now", "Break it into smaller steps", "I have too much college work", "Reschedule to tomorrow"];
-    }
-    if (trigger === "task_celebration") {
-      return ["That felt great! 🎉", "What's next?", "Taking a rest 🌸"];
-    }
-    if (trigger === "task_unfinished") {
-      return ["Starting right now 💪", "Break it into smaller steps", "I'm too tired today", "I completed it!"];
-    }
-    if (trigger === "overload_warning") {
-      return ["Help me prioritize", "Pick top 3 for me", "I have too much college work"];
-    }
-    if (trigger === "deadline_approaching") {
-      return ["Starting now!", "Break it into smaller steps", "Reschedule to tomorrow"];
-    }
-    return ["I'm doing good", "Help me plan", `Bye ${companionName}`];
-  }, [activeNudge?.trigger, companionName]);
 
-  const toggleVoice = useCallback(() => {
-    if (typeof window === "undefined") return;
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Voice speech recognition is not supported in this browser.");
-      return;
-    }
-    if (isListening) {
-      try { recognitionRef.current?.stop(); } catch {}
-      setIsListening(false);
-      return;
-    }
-    try {
-      const recognition = new SpeechRecognition();
-      recognition.lang = "en-US";
-      recognition.interimResults = true;
-      recognition.continuous = false;
-      recognition.onresult = (e: any) => {
-        const transcript = Array.from(e.results)
-          .map((r: any) => r[0]?.transcript || "")
-          .join("");
-        setInputText(transcript);
-      };
-      recognition.onend = () => setIsListening(false);
-      recognition.onerror = () => setIsListening(false);
-      recognitionRef.current = recognition;
-      recognition.start();
-      setIsListening(true);
-    } catch {
-      setIsListening(false);
-    }
-  }, [isListening]);
-
-  const handleSendReply = useCallback(
-    async (textToSend?: string) => {
-      const text = (textToSend ?? inputText).trim();
-      if (!text || isSubmitting) return;
-
-      setInputText("");
-      setIsSubmitting(true);
-
-      // Handle user saying goodbye naturally
-      if (/^(bye|see you|goodbye)\b/i.test(text)) {
-        setIsConversationalOpen(false);
-        handleByeNikki();
-        setIsSubmitting(false);
-        return;
-      }
-
-      // Handle user requesting a break naturally
-      if (/\b(take a break|taking a break|need a break)\b/i.test(text)) {
-        setBreakPickerOpen(true);
-        setIsConversationalOpen(false);
-        setIsSubmitting(false);
-        return;
-      }
-
-      const userMsgId = `user_${Date.now()}`;
-      setBubbleConversation((prev) => [
-        ...prev,
-        { id: userMsgId, role: "user", content: text },
-      ]);
-
-      try {
-        const tz = getUserTimezone(profile?.timezone);
-        const res = await authFetch("/api/nikki/nudge/reply", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            nudgeId: activeNudge?.id,
-            message: text,
-            timezone: tz,
-          }),
-        });
-
-        const env = await res.json();
-        if (env?.data?.reply) {
-          setBubbleConversation((prev) => [
-            ...prev,
-            { id: `nikki_${Date.now()}`, role: "nikki", content: env.data.reply },
-          ]);
-
-          // Update character pose from API if present
-          const apiPose = env.data.pose as CompanionPose | undefined;
-          const talkingPose: CompanionPose = apiPose || "happy";
-          setActiveSignal({ state: "talking", pose: talkingPose });
-          setTimeout(() => setActiveSignal(null), 3000);
-
-          // TTS: speak the reply if enabled
-          if (isTtsEnabled && typeof window !== "undefined" && window.speechSynthesis) {
-            window.speechSynthesis.cancel();
-            const utt = new SpeechSynthesisUtterance(env.data.reply.replace(/[*_~`]/g, ""));
-            utt.rate = 1.05;
-            utt.pitch = 1.1;
-            window.speechSynthesis.speak(utt);
-          }
-
-          // If timetable was modified, emit event so timetable UI syncs
-          if (env.data.schedule || env.data.intent === "timetable_delete") {
-            window.dispatchEvent(new CustomEvent("companion:schedule-change"));
-          }
-          // If goals or tasks were modified, emit event so goals/tasks UI syncs
-          if (env.data.goalTaskChanged) {
-            window.dispatchEvent(new CustomEvent("companion:goal-task-change"));
-          }
-        }
-      } catch {
-        setBubbleConversation((prev) => [
-          ...prev,
-          {
-            id: `err_${Date.now()}`,
-            role: "nikki",
-            content: "I'm right here with you! Let me know if you need anything else.",
-          },
-        ]);
-      } finally {
-        setIsSubmitting(false);
-      }
-    },
-    [inputText, isSubmitting, activeNudge?.id, profile?.timezone, handleByeNikki, isTtsEnabled]
-  );
 
   const handleDismissBubble = useCallback(async () => {
-    setIsConversationalOpen(false);
     if (activeNudge?.id) {
       authFetch("/api/nikki/nudge/dismiss", {
         method: "POST",
@@ -991,7 +792,6 @@ export function NikkiProactivePresence() {
   }, [activeNudge?.id]);
 
   const handleMuteForNow = useCallback(async () => {
-    setIsConversationalOpen(false);
     if (activeNudge?.id) {
       setActiveNudge(null);
     }
@@ -1003,13 +803,6 @@ export function NikkiProactivePresence() {
       });
     } catch {}
   }, [activeNudge?.id]);
-
-  // Auto-scroll bubble to bottom when new messages appear
-  useEffect(() => {
-    if (isConversationalOpen && bubbleEndRef.current) {
-      bubbleEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [bubbleConversation, isConversationalOpen]);
 
   // Listen to companion state change events triggered by chat intent interactions (goodbye, return, sleep, break)
   useEffect(() => {
@@ -1693,8 +1486,6 @@ export function NikkiProactivePresence() {
     companionPose = timetableAlert.pose;
   } else if (openingGreeting) {
     companionPose = openingGreeting.pose;
-  } else if (isConversationalOpen) {
-    companionPose = "curious";
   } else if (isLateNight) {
     companionPose = "sleepy";
   } else if (currentHour >= 6 && currentHour < 12) {
@@ -1767,17 +1558,6 @@ export function NikkiProactivePresence() {
     if (action === "talk") {
       if (activeCheckIn) {
         await respondToCheckIn("talk", interventionType);
-        setOpeningGreeting(null);
-        router.push("/dashboard");
-        return;
-      }
-      // Convert proactive greeting bubble into conversational bubble
-      if (openingGreeting) {
-        const initContent = openingGreeting.message;
-        setOpeningGreeting(null);
-        setBubbleConversation([{ id: `nikki_greet_${Date.now()}`, role: "nikki", content: initContent }]);
-        setIsConversationalOpen(true);
-        return;
       }
       setOpeningGreeting(null);
       router.push("/dashboard");
@@ -1826,47 +1606,8 @@ export function NikkiProactivePresence() {
       return;
     }
 
-    if (displayedMessage) {
-      // A proactive greeting / check-in is showing — tapping converts it into the conversational bubble
-      setOpeningGreeting(null);
-      const initMsg = displayedMessage.message;
-      setBubbleConversation([{ id: `nikki_init_${Date.now()}`, role: "nikki", content: initMsg }]);
-      setIsConversationalOpen(true);
-      return;
-    }
-
-    if (isConversationalOpen) {
-      // Bubble already open — close it
-      setIsConversationalOpen(false);
-      return;
-    }
-
-    // Open conversational bubble with a context-aware check-in line
-    const h = new Date().getHours();
-    const initLines =
-      h >= 23 || h < 5
-        ? [
-            `Still up, ${userName}? 🌙 How are you holding up right now?`,
-            `Late night, huh? Everything okay? I'm right here with you. 💙`,
-          ]
-        : h < 12
-        ? [
-            `Hey ${userName}! Good morning 🌅 — how are you feeling today?`,
-            `Morning! What's on your mind today? Want to plan something out?`,
-          ]
-        : h < 18
-        ? [
-            `Hey ${userName}! How's the afternoon treating you? Need anything?`,
-            `Just checking in — how's everything going right now? 🌿`,
-          ]
-        : [
-            `Evening, ${userName}! How did today go? Want to reflect or just chat?`,
-            `Hey! Hope your evening is peaceful. What's on your mind?`,
-          ];
-    const line = initLines[Math.floor(Math.random() * initLines.length)];
-    setBubbleConversation([{ id: `nikki_tap_${Date.now()}`, role: "nikki", content: line }]);
-    setActiveNudge(null);
-    setIsConversationalOpen(true);
+    // Clicking Nikki's avatar opens the full Companion chat
+    router.push("/dashboard");
   };
 
   // Determine which speech bubble is active:
@@ -2054,238 +1795,6 @@ export function NikkiProactivePresence() {
         )}
       </AnimatePresence>
 
-      {/* Conversational Bubble — tap-to-talk / proactive nudges */}
-      <AnimatePresence>
-        {!displayedMessage && !goodbyeMessage && (isConversationalOpen || (activeNudge && !isConversationalOpen)) && !isMinimized && !isTyping && (
-          <motion.div
-            key="convo-bubble"
-            initial={{ opacity: 0, y: 16, scale: 0.92 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.92 }}
-            transition={
-              reduceMotion
-                ? { duration: 0.1 }
-                : { type: "spring", damping: 22, stiffness: 280 }
-            }
-            className="pointer-events-auto mb-3 w-[calc(100vw-2rem)] sm:w-80 md:w-96 max-w-sm rounded-2xl border border-cyan-400/35 bg-slate-900/95 shadow-2xl backdrop-blur-xl flex flex-col overflow-hidden"
-          >
-            {/* ── Header ───────────────────────────────────────────────────── */}
-            <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5">
-              <div className="flex items-center gap-2">
-                <span className="flex h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
-                <span className="font-mono text-xs font-semibold text-cyan-300">{companionName}</span>
-                <span className="rounded-full bg-cyan-400/10 px-2 py-0.5 text-[10px] text-cyan-300/80 font-mono capitalize">
-                  {activeNudge?.trigger === "late_night"
-                    ? "🌙 Late night"
-                    : activeNudge?.trigger === "morning_plan" || activeNudge?.trigger === "no_timetable"
-                    ? "✨ Planning"
-                    : activeNudge?.trigger === "task_overdue"
-                    ? "💡 Check-in"
-                    : activeNudge?.trigger === "long_session"
-                    ? "☕ Break?"
-                    : activeNudge?.trigger === "goal_neglected"
-                    ? "💗 Goals"
-                    : activeNudge?.trigger === "caring_frustration"
-                    ? "🤔 Honest moment"
-                    : "💬 Chat"}
-                </span>
-              </div>
-              <div className="flex items-center gap-1">
-                {/* TTS toggle */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsTtsEnabled((v) => !v);
-                    if (isTtsEnabled && typeof window !== "undefined") {
-                      window.speechSynthesis?.cancel();
-                    }
-                  }}
-                  className={`rounded-md p-1 transition-colors ${
-                    isTtsEnabled ? "text-cyan-300 bg-cyan-400/10" : "text-ink-muted hover:text-white hover:bg-white/10"
-                  }`}
-                  title={isTtsEnabled ? "Mute voice" : "Enable voice"}
-                  aria-label={isTtsEnabled ? "Mute Nikki's voice" : "Enable Nikki's voice"}
-                >
-                  <span className="text-[11px] font-mono select-none">{isTtsEnabled ? "🔊" : "🔇"}</span>
-                </button>
-                {/* Mute 2h */}
-                <button
-                  type="button"
-                  onClick={handleMuteForNow}
-                  className="rounded-md p-1 text-ink-muted hover:bg-white/10 hover:text-white transition-colors"
-                  title="Quiet for 2 hours"
-                  aria-label="Quiet for 2 hours"
-                >
-                  <BellOff className="h-3.5 w-3.5" />
-                </button>
-                {/* Minimize */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsConversationalOpen(false);
-                    setIsMinimized(true);
-                    try { sessionStorage.setItem(MINIMIZED_STORAGE_KEY, "true"); } catch {}
-                  }}
-                  className="rounded-md p-1 text-ink-muted hover:bg-white/10 hover:text-white transition-colors"
-                  title="Minimize"
-                  aria-label="Minimize"
-                >
-                  <Minimize2 className="h-3.5 w-3.5" />
-                </button>
-                {/* Close bubble */}
-                <button
-                  type="button"
-                  onClick={() => setIsConversationalOpen(false)}
-                  className="rounded-md p-1 text-ink-muted hover:bg-white/10 hover:text-white transition-colors"
-                  title="Close"
-                  aria-label="Close"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {/* ── Message Thread ────────────────────────────────────────────── */}
-            <div className="flex-1 overflow-y-auto max-h-64 px-4 py-3 space-y-2.5 scrollbar-thin scrollbar-thumb-white/10">
-              {bubbleConversation.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
-                      msg.role === "user"
-                        ? "bg-cyan-500/20 text-cyan-100 rounded-br-sm"
-                        : "bg-white/8 text-white rounded-bl-sm"
-                    }`}
-                  >
-                    {msg.content}
-                  </div>
-                </div>
-              ))}
-              {isSubmitting && (
-                <div className="flex justify-start">
-                  <div className="rounded-2xl rounded-bl-sm bg-white/8 px-3 py-2 text-sm text-ink-muted">
-                    <span className="inline-flex gap-1 items-center">
-                      <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-bounce [animation-delay:0ms]" />
-                      <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-bounce [animation-delay:150ms]" />
-                      <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-bounce [animation-delay:300ms]" />
-                    </span>
-                  </div>
-                </div>
-              )}
-              <div ref={bubbleEndRef} />
-            </div>
-
-            {/* ── Quick Reply Pills ─────────────────────────────────────────── */}
-            {quickReplyChips.length > 0 && !isSubmitting && (
-              <div className="px-4 pb-2 flex flex-wrap gap-1.5">
-                {quickReplyChips.map((chip) => (
-                  <button
-                    key={chip}
-                    type="button"
-                    onClick={() => handleSendReply(chip)}
-                    className="rounded-full border border-cyan-400/30 bg-cyan-400/8 px-2.5 py-1 text-[11px] font-medium text-cyan-200 hover:bg-cyan-400/20 hover:border-cyan-400/60 transition-all"
-                  >
-                    {chip}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* ── Contextual Actions (break / focus / schedule) ─────────────── */}
-            <div className="px-4 pb-2 flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                onClick={() => { setIsConversationalOpen(false); setBreakPickerOpen(true); }}
-                className="rounded-full border border-amber-400/25 bg-amber-400/8 px-2.5 py-1 text-[11px] font-medium text-amber-300/80 hover:bg-amber-400/20 hover:border-amber-400/50 transition-all"
-                title="Start a break"
-              >
-                ☕ Break
-              </button>
-              <button
-                type="button"
-                onClick={() => { setIsConversationalOpen(false); router.push("/focus"); }}
-                className="rounded-full border border-violet-400/25 bg-violet-400/8 px-2.5 py-1 text-[11px] font-medium text-violet-300/80 hover:bg-violet-400/20 hover:border-violet-400/50 transition-all"
-                title="Focus session"
-              >
-                ✨ Focus
-              </button>
-              <button
-                type="button"
-                onClick={() => { setIsConversationalOpen(false); router.push("/plan?tab=schedule"); }}
-                className="rounded-full border border-teal-400/25 bg-teal-400/8 px-2.5 py-1 text-[11px] font-medium text-teal-300/80 hover:bg-teal-400/20 hover:border-teal-400/50 transition-all"
-                title="Today's timetable"
-              >
-                📅 Timetable
-              </button>
-              <button
-                type="button"
-                onClick={handleByeNikki}
-                className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-ink-muted hover:bg-white/10 hover:text-white transition-all"
-                title={`Bye ${companionName}`}
-              >
-                👋 Bye
-              </button>
-            </div>
-
-            {/* ── Footer: Input + Voice + Send ─────────────────────────────── */}
-            <div className="border-t border-white/10 px-3 py-2.5 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={toggleVoice}
-                className={`flex-shrink-0 rounded-full p-1.5 transition-colors ${
-                  isListening
-                    ? "bg-rose-500/20 text-rose-400 ring-1 ring-rose-400/50 animate-pulse"
-                    : "text-ink-muted hover:text-cyan-300 hover:bg-white/10"
-                }`}
-                title={isListening ? "Stop listening" : "Voice input"}
-                aria-label={isListening ? "Stop listening" : "Voice input"}
-              >
-                {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-              </button>
-
-              <input
-                type="text"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendReply();
-                  }
-                }}
-                placeholder={isListening ? "Listening…" : `Message ${companionName}…`}
-                className="flex-1 min-w-0 rounded-xl bg-white/5 border border-white/10 px-3 py-1.5 text-sm text-white placeholder-ink-muted focus:outline-none focus:border-cyan-400/60 focus:ring-1 focus:ring-cyan-400/30 transition-colors"
-                aria-label={`Message ${companionName}`}
-              />
-
-              <button
-                type="button"
-                onClick={() => handleSendReply()}
-                disabled={!inputText.trim() || isSubmitting}
-                className="flex-shrink-0 rounded-full bg-cyan-500 p-1.5 text-slate-950 hover:bg-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-                aria-label="Send message"
-                title="Send"
-              >
-                <Send className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Footer hint */}
-            <div className="px-4 pb-2 flex items-center justify-between text-[10px] text-ink-muted/60">
-              <button
-                type="button"
-                onClick={() => setIsDismissed(true)}
-                className="hover:text-rose-400 transition-colors"
-              >
-                Hide for now
-              </button>
-              <span>Draggable · Enter to send</span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Break Picker Panel */}
       <AnimatePresence>

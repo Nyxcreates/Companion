@@ -13,7 +13,7 @@
  *  5. Graceful shutdown on Windows logoff / restart.
  */
 
-const { app, BrowserWindow, ipcMain, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, nativeImage, Notification } = require("electron");
 const path = require("path");
 const { TrayManager } = require("./tray");
 const { SessionWatcher } = require("./session");
@@ -410,6 +410,26 @@ function registerIPC() {
   ipcMain.on("companion:floating-nudge-forward", (_event, nudge) => {
     if (floatingManager) {
       floatingManager.showNudge(nudge);
+    }
+    // Also fire a native Windows toast so the user sees the nudge even when
+    // the Companion PWA/website is not visible or is minimised.
+    if (nudge && nudge.message && Notification.isSupported()) {
+      try {
+        const iconPath = path.join(__dirname, "icons", "icon-256.png");
+        const toast = new Notification({
+          title: "Nikki 💙",
+          body: nudge.message,
+          icon: iconPath,
+          silent: false,
+          timeoutType: "default",
+        });
+        toast.on("click", () => {
+          showWindow();
+        });
+        toast.show();
+      } catch {
+        // Notifications not available in this environment — silent fail
+      }
     }
   });
 
