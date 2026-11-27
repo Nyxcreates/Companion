@@ -442,6 +442,39 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     }
   };
 
+  // Sync Firebase ID token + origin + timezone to Android's AppUsageTrackerService when running in native WebView
+  useEffect(() => {
+    if (!firebaseUser || typeof window === "undefined") return;
+    const nativeBridge = (
+      window as unknown as {
+        CompanionNative?: {
+          syncUsageContext?: (token: string, origin: string, timezone: string) => void;
+        };
+      }
+    ).CompanionNative;
+
+    if (!nativeBridge?.syncUsageContext) return;
+
+    let cancelled = false;
+    const syncToken = async () => {
+      try {
+        const token = await firebaseUser.getIdToken();
+        if (!cancelled && token) {
+          nativeBridge.syncUsageContext?.(token, window.location.origin, getBrowserTimezone());
+        }
+      } catch {
+        // Non-fatal
+      }
+    };
+
+    void syncToken();
+    const intervalId = setInterval(() => void syncToken(), 30 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [firebaseUser]);
+
   return (
     <NotificationContext.Provider
       value={{

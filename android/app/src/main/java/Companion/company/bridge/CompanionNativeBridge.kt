@@ -129,5 +129,24 @@ class CompanionNativeBridge(private val context: Context) {
             context.stopService(intent)
         }
     }
+
+    /**
+     * Syncs the signed-in user's Firebase ID token, backend origin URL, and
+     * IANA timezone so AppUsageTrackerService can query active study/task
+     * blocks when distracting apps are detected.
+     */
+    @JavascriptInterface
+    fun syncUsageContext(idToken: String?, apiBaseUrl: String?, timezone: String?) {
+        val prefs = context.getSharedPreferences(
+            AppUsageTrackerService.PREFS_NAME,
+            Context.MODE_PRIVATE
+        )
+        prefs.edit().apply {
+            if (!idToken.isNullOrBlank()) putString(AppUsageTrackerService.KEY_ID_TOKEN, idToken)
+            if (!apiBaseUrl.isNullOrBlank()) putString(AppUsageTrackerService.KEY_API_BASE_URL, apiBaseUrl.trimEnd('/'))
+            if (!timezone.isNullOrBlank()) putString(AppUsageTrackerService.KEY_TIMEZONE, timezone)
+            apply()
+        }
+    }
 }
 
