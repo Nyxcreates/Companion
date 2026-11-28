@@ -13,7 +13,12 @@ import {
   Target,
   ListTodo,
   CalendarClock,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
+import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { Card } from "@/components/ui/Card";
 import { Textarea } from "@/components/ui/Textarea";
 import { Button } from "@/components/ui/Button";
@@ -79,6 +84,18 @@ function getBrowserTimezone(): string {
   }
 }
 
+function getSpeechLanguage(profileLang?: string | null): string {
+  if (profileLang?.trim()) return profileLang.trim();
+  return "en-IN";
+}
+
+function stripMarkdownAndEmoji(text: string): string {
+  return text
+    .replace(/[*_~`#>]+/g, "")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F02F}\u{2600}-\u{27BF}]/gu, "")
+    .trim();
+}
+
 export function CompanionChatPanel({
   conversationId,
   isNewConversationPending,
@@ -127,6 +144,11 @@ export function CompanionChatPanel({
   // Copy feedback state
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
 
+  // Voice input state
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [autoSendOnStop, setAutoSendOnStop] = useState(false);
+  const [speakReplies, setSpeakReplies] = useState(false);
+
   const loadedConversationIdRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -137,6 +159,29 @@ export function CompanionChatPanel({
   useEffect(() => {
     setEnterInsertsNewline(window.matchMedia("(pointer: coarse)").matches);
   }, []);
+
+  const speechLang = getSpeechLanguage();
+  const { isSupported: speechSupported, isListening, startListening, stopListening } = useSpeechRecognition({
+    lang: speechLang,
+    onInterimTranscript: (text) => {
+      setInput(text);
+    },
+    onFinalTranscript: (text) => {
+      const trimmed = text.trim();
+      if (autoSendOnStop && trimmed) {
+        setInput("");
+        handleSend(trimmed);
+      } else {
+        setInput(text);
+      }
+    },
+    onError: (_type, message) => {
+      setVoiceError(message);
+    },
+    onEnd: () => {
+      // listening stopped naturally
+    },
+  });
 
   // Auto-grow up to max-height, then scroll internally.
   useLayoutEffect(() => {
@@ -201,6 +246,11 @@ export function CompanionChatPanel({
     const message = (overrideText ?? input).trim();
     if (!message || isSending || sendingRef.current) return;
     sendingRef.current = true;
+
+    // Stop any ongoing speech synthesis when sending
+    if (typeof window !== "undefined") {
+      window.speechSynthesis?.cancel();
+    }
 
     setError(null);
     setLastFailedMessage(null);
@@ -297,6 +347,16 @@ export function CompanionChatPanel({
           );
         } catch {
           // safe fallback
+        }
+      }
+
+      // Speak Nikki's reply if the toggle is on
+      if (speakReplies && agentResponse.message) {
+        const clean = stripMarkdownAndEmoji(agentResponse.message);
+        if (clean && typeof window !== "undefined" && window.speechSynthesis) {
+          const utt = new SpeechSynthesisUtterance(clean);
+          window.speechSynthesis.cancel();
+          window.speechSynthesis.speak(utt);
         }
       }
     } catch (err) {
@@ -703,6 +763,49 @@ export function CompanionChatPanel({
         </div>
       )}
 
+      {/* Voice error bar */}
+      {voiceError && (
+        <div className="flex items-center justify-between border-t border-warning/20 bg-warning/10 px-4 py-1.5 text-xs text-warning">
+          <span>{voiceError}</span>
+          <button type="button" onClick={() => setVoiceError(null)} className="ml-2 underline">
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Voice privacy notice + toggles */}
+      {speechSupported && (
+        <div className="border-t border-white/5 px-4 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-ink-muted">
+          <span>Your browser&apos;s speech service may process audio. Companion doesn&apos;t store recordings.</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-1 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoSendOnStop}
+                onChange={(e) => setAutoSendOnStop(e.target.checked)}
+                className="accent-cyan-400"
+              />
+              Auto-send when I stop talking
+            </label>
+            <button
+              type="button"
+              aria-label={speakReplies ? "Mute replies" : "Speak replies"}
+              aria-pressed={speakReplies}
+              onClick={() => {
+                setSpeakReplies((v) => {
+                  if (v && typeof window !== "undefined") window.speechSynthesis?.cancel();
+                  return !v;
+                });
+              }}
+              className="flex items-center gap-1 hover:text-white"
+            >
+              {speakReplies ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+              {speakReplies ? "Speak replies: On" : "Speak replies"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Chat Composer */}
       <div className={`flex items-end gap-2 border-t border-white/10 px-4 py-3 ${expanded ? "max-w-4xl w-full mx-auto" : ""}`}>
         <div className="min-w-0 flex-1">
@@ -734,6 +837,42 @@ export function CompanionChatPanel({
         <span id="chat-input-hint" className="sr-only">
           {enterInsertsNewline ? "Use the Send button to send." : "Press Enter to send, Shift and Enter for a new line."}
         </span>
+
+        {/* Mic button */}
+        {speechSupported ? (
+          <button
+            type="button"
+            aria-label={isListening ? "Stop voice input" : "Start voice input"}
+            aria-pressed={isListening}
+            disabled={isSending}
+            onClick={() => {
+              setVoiceError(null);
+              if (isListening) {
+                stopListening();
+              } else {
+                if (typeof window !== "undefined") {
+                  window.speechSynthesis?.cancel();
+                }
+                startListening();
+              }
+            }}
+            className={`shrink-0 rounded-full p-2 transition-colors ${
+              isListening
+                ? "bg-rose-500/20 text-rose-400 ring-1 ring-rose-400/50 animate-pulse"
+                : "text-ink-muted hover:text-cyan-300 hover:bg-white/10"
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
+          >
+            {isListening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+          </button>
+        ) : (
+          <span
+            className="text-[11px] text-ink-muted px-1 shrink-0"
+            title="Voice input not supported in this browser"
+          >
+            Voice unsupported
+          </span>
+        )}
+
         <Button onClick={() => handleSend()} disabled={!input.trim() || isSending} isLoading={isSending} className="shrink-0">
           Send
         </Button>
