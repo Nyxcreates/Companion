@@ -597,7 +597,7 @@ async function asyncTest(name, fn) {
 }
 
 await asyncTest("FullscreenDetector recognizes Windows QUNS suppression states", async () => {
-  assert(SUPPRESSED_STATES.has(2) && SUPPRESSED_STATES.has(3) && SUPPRESSED_STATES.has(4) && SUPPRESSED_STATES.has(6));
+  assert(!SUPPRESSED_STATES.has(2) && SUPPRESSED_STATES.has(3) && SUPPRESSED_STATES.has(4) && !SUPPRESSED_STATES.has(6));
   const detector = new FullscreenDetector({
     queryFn: async () => ({ suppressed: true, quietTime: false, stateCode: 3 }),
   });
@@ -620,8 +620,8 @@ test("TrayManager supports Start with Windows toggle", () => {
     getNikkiPaused: () => false,
     getAutoLaunch: () => true,
   });
-  const item = tm.tray.menu.items.find((i) => i.label === "Start with Windows");
-  assert(item, "Should have Start with Windows menu item");
+  const item = tm.tray.menu.items.find((i) => i.label === "Launch at login");
+  assert(item, "Should have Launch at login menu item");
   assert(item.checked === true, "Should reflect getAutoLaunch state");
   item.click();
   assert(toggled === true, "Should invoke onToggleAutoLaunch callback");

@@ -98,6 +98,12 @@ class TrayManager {
         click: () => this.callbacks.onShowHideNikki(),
       },
       {
+        label: "Bring Nikki to Front",
+        click: () =>
+          this.callbacks.onBringNikkiToFront &&
+          this.callbacks.onBringNikkiToFront(),
+      },
+      {
         label: "Pause Nikki",
         click: () => this.callbacks.onPause(),
         enabled: !nikkiPaused,
@@ -124,7 +130,7 @@ class TrayManager {
           this.callbacks.onToggleAllowFullscreen(),
       },
       {
-        label: "Start with Windows",
+        label: "Launch at login",
         type: "checkbox",
         checked: autoLaunch,
         click: () =>

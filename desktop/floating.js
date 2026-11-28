@@ -20,6 +20,69 @@ const DEFAULT_WIDTH = 330;
 const DEFAULT_HEIGHT = 310;
 const EDGE_PADDING = 18;
 const SNAP_THRESHOLD = 16;
+const Z_ORDER_WATCHDOG_MS = 1500;
+const SHOW_FALLBACK_TIMEOUT_MS = 2500;
+
+function buildRetryFallbackHtml(targetUrl) {
+  const safeUrl = JSON.stringify(targetUrl);
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: transparent; overflow: hidden;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    display: flex; align-items: flex-end; justify-content: flex-end;
+  }
+  .card {
+    margin: 12px;
+    padding: 12px 14px;
+    border-radius: 16px;
+    background: rgba(20, 19, 42, 0.94);
+    border: 1px solid rgba(167, 139, 250, 0.45);
+    color: #fff;
+    font-size: 12px;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    -webkit-app-region: drag;
+  }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #a78bfa;
+    box-shadow: 0 0 8px #a78bfa;
+    flex-shrink: 0;
+  }
+  .btn {
+    -webkit-app-region: no-drag;
+    background: rgba(167, 139, 250, 0.25);
+    border: 1px solid rgba(167, 139, 250, 0.6);
+    color: #fff;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .btn:hover {
+    background: rgba(167, 139, 250, 0.4);
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <span class="dot"></span>
+    <span>Nikki offline</span>
+    <button class="btn" id="retry-btn" type="button">Retry</button>
+  </div>
+  <script>
+    document.getElementById("retry-btn").addEventListener("click", function () {
+      window.location.href = ${safeUrl};
+    });
+  </script>
+</body>
+</html>`;
+}
 
 function createSettingsStore() {
   try {
@@ -95,7 +158,10 @@ class FloatingManager {
     /** @type {BrowserWindow | null} */
     this.window = null;
 
-    this.visible = Boolean(this.store.get("visible", true));
+    this.visible =
+      typeof options.startVisible === "boolean"
+        ? options.startVisible
+        : Boolean(this.store.get("visible", true));
     this.paused = false;
     this.dnd = Boolean(this.store.get("dnd", false));
     this.minimized = Boolean(this.store.get("minimized", false));
@@ -106,6 +172,10 @@ class FloatingManager {
 
     this._fullscreenTimer = null;
     this._reloadTimer = null;
+    this._zOrderTimer = null;
+    this._showFallbackTimer = null;
+    this._intentionalHide = false;
+    this._usingFallbackPage = false;
     this._displayListenersAttached = false;
   }
 
@@ -124,14 +194,18 @@ class FloatingManager {
       height: DEFAULT_HEIGHT,
       x: pos.x,
       y: pos.y,
+      title: "Floating Nikki",
+      type: process.platform === "win32" ? "toolbar" : undefined,
       transparent: true,
       frame: false,
       alwaysOnTop: true,
       skipTaskbar: true,
       resizable: false,
       movable: true,
+      minimizable: false,
+      maximizable: false,
       hasShadow: false,
-      focusable: true,
+      focusable: false,
       show: false,
       backgroundColor: "#00000000",
       webPreferences: {
@@ -143,8 +217,8 @@ class FloatingManager {
       },
     });
 
-    // Keep above ordinary desktop windows (VS Code, Chrome, Word, etc.)
-    this.window.setAlwaysOnTop(true, "screen-saver");
+    // Keep above ordinary desktop windows (VS Code, Chrome, Word, etc.) and Windows desktop
+    this._assertTopmost();
     this.window.setVisibleOnAllWorkspaces(true, {
       visibleOnFullScreen: this.allowOverFullscreen,
     });
@@ -153,25 +227,103 @@ class FloatingManager {
     this.window.setIgnoreMouseEvents(true, { forward: true });
 
     const floatingUrl = `${this.baseUrl.replace(/\/$/, "")}/desktop/floating`;
+    this._usingFallbackPage = false;
     this.window.loadURL(floatingUrl);
 
-    this.window.webContents.on("did-fail-load", () => {
+    // Never leave the window permanently hidden if ready-to-show is delayed/blocked.
+    if (this._showFallbackTimer) clearTimeout(this._showFallbackTimer);
+    this._showFallbackTimer = setTimeout(() => {
+      this._showFallbackTimer = null;
+      this._syncVisibility();
+    }, SHOW_FALLBACK_TIMEOUT_MS);
+
+    const scheduleReload = () => {
       if (this.isQuitting || this._reloadTimer) return;
       this._reloadTimer = setTimeout(() => {
         this._reloadTimer = null;
         if (this.window && !this.window.isDestroyed()) {
+          this._usingFallbackPage = false;
           this.window.loadURL(floatingUrl);
         }
       }, 10_000);
+    };
+
+    const showFallbackOverlay = () => {
+      if (!this.window || this.window.isDestroyed() || this._usingFallbackPage) return;
+      this._usingFallbackPage = true;
+      this.window.setIgnoreMouseEvents(false);
+      this.window.loadURL(
+        `data:text/html;charset=utf-8,${encodeURIComponent(buildRetryFallbackHtml(floatingUrl))}`
+      );
+      this._syncVisibility();
+    };
+
+    this.window.webContents.on("did-fail-load", (_event, errorCode) => {
+      // -3 (ERR_ABORTED) occurs on normal redirects/reloads
+      if (errorCode === -3) return;
+      showFallbackOverlay();
+      scheduleReload();
+    });
+
+    this.window.webContents.on("did-finish-load", () => {
+      const currentUrl =
+        typeof this.window?.webContents?.getURL === "function"
+          ? this.window.webContents.getURL()
+          : "";
+      if (currentUrl && !currentUrl.startsWith("data:")) {
+        this._usingFallbackPage = false;
+        this.window.setIgnoreMouseEvents(true, { forward: true });
+      }
+      this._syncVisibility();
+    });
+
+    this.window.webContents.on("render-process-gone", () => {
+      if (this.isQuitting) return;
+      if (this.window && !this.window.isDestroyed()) {
+        this.window.destroy();
+      }
+      this.window = null;
+      setTimeout(() => {
+        if (!this.isQuitting) this.create();
+      }, 1000);
     });
 
     this.window.once("ready-to-show", () => {
-      if (this._reloadTimer) {
+      if (this._showFallbackTimer) {
+        clearTimeout(this._showFallbackTimer);
+        this._showFallbackTimer = null;
+      }
+      if (this._reloadTimer && !this._usingFallbackPage) {
         clearTimeout(this._reloadTimer);
         this._reloadTimer = null;
       }
       this._syncVisibility();
       this._pushStateToRenderer();
+    });
+
+    // Recover from Windows Show Desktop (Win+D) or accidental minimize/hide
+    const recoverIfNeeded = () => {
+      if (this.isQuitting || this._intentionalHide || !this.shouldShow()) return;
+      setTimeout(() => {
+        if (!this.window || this.window.isDestroyed()) return;
+        if (this.isQuitting || this._intentionalHide || !this.shouldShow()) return;
+        if (typeof this.window.isMinimized === "function" && this.window.isMinimized()) {
+          this.window.restore();
+        }
+        if (!this.window.isVisible()) {
+          this.window.showInactive();
+        }
+        this._assertTopmost();
+      }, 80);
+    };
+
+    this.window.on("minimize", (event) => {
+      if (typeof event?.preventDefault === "function") event.preventDefault();
+      recoverIfNeeded();
+    });
+    this.window.on("hide", recoverIfNeeded);
+    this.window.on("page-title-updated", (event) => {
+      if (typeof event?.preventDefault === "function") event.preventDefault();
     });
 
     this.window.on("close", (event) => {
@@ -183,10 +335,16 @@ class FloatingManager {
 
     this.window.on("closed", () => {
       this.window = null;
+      if (!this.isQuitting) {
+        setTimeout(() => {
+          if (!this.isQuitting) this.create();
+        }, 1000);
+      }
     });
 
     this._attachDisplayListeners();
     this._startFullscreenMonitor();
+    this._startZOrderWatchdog();
 
     return this.window;
   }
@@ -379,15 +537,61 @@ class FloatingManager {
     return true;
   }
 
+  _assertTopmost() {
+    if (!this.window || this.window.isDestroyed()) return;
+    this.window.setAlwaysOnTop(true, "screen-saver", 1);
+    if (typeof this.window.moveTop === "function") {
+      this.window.moveTop();
+    }
+  }
+
+  _startZOrderWatchdog() {
+    if (this._zOrderTimer) return;
+    this._zOrderTimer = setInterval(() => {
+      if (this.isQuitting || !this.shouldShow()) return;
+      if (!this.window || this.window.isDestroyed()) {
+        this.create();
+        return;
+      }
+      if (typeof this.window.isMinimized === "function" && this.window.isMinimized()) {
+        this.window.restore();
+      }
+      if (!this.window.isVisible()) {
+        this.window.showInactive();
+      }
+      this._assertTopmost();
+    }, Z_ORDER_WATCHDOG_MS);
+  }
+
+  bringToFront() {
+    this.visible = true;
+    this.paused = false;
+    this.dnd = false;
+    this.store.set("visible", true);
+    this.store.set("dnd", false);
+    if (!this.window || this.window.isDestroyed()) {
+      this.create();
+    }
+    this._syncVisibility();
+    this._assertTopmost();
+    this._pushStateToRenderer();
+    this.onStateChange(this.getState());
+  }
+
   _syncVisibility() {
     if (!this.window || this.window.isDestroyed()) return;
     if (this.shouldShow()) {
-      this.window.setAlwaysOnTop(true, "screen-saver");
+      this._intentionalHide = false;
+      if (typeof this.window.isMinimized === "function" && this.window.isMinimized()) {
+        this.window.restore();
+      }
+      this._assertTopmost();
       if (!this.window.isVisible()) {
         // showInactive() displays Nikki over other apps without stealing focus
         this.window.showInactive();
       }
     } else if (this.window.isVisible()) {
+      this._intentionalHide = true;
       this.window.hide();
     }
   }
@@ -437,6 +641,14 @@ class FloatingManager {
     if (this._reloadTimer) {
       clearTimeout(this._reloadTimer);
       this._reloadTimer = null;
+    }
+    if (this._zOrderTimer) {
+      clearInterval(this._zOrderTimer);
+      this._zOrderTimer = null;
+    }
+    if (this._showFallbackTimer) {
+      clearTimeout(this._showFallbackTimer);
+      this._showFallbackTimer = null;
     }
     if (this.window && !this.window.isDestroyed()) {
       this.window.destroy();

@@ -7,7 +7,7 @@
   "license": "PRIVATE",
   "scripts": {
     "start": "electron .",
-    "dev": "cross-env COMPANION_URL=http://localhost:3000 electron .",
+    "dev": "cross-env ELECTRON_RUN_AS_NODE= COMPANION_URL=http://localhost:3000 electron .",
     "test": "node test-desktop.mjs"
   },
   "dependencies": {

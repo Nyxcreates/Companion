@@ -13,8 +13,30 @@
  *  5. Graceful shutdown on Windows logoff / restart.
  */
 
-const { app, BrowserWindow, ipcMain, nativeImage, Notification } = require("electron");
+const electron = require("electron");
 const path = require("path");
+
+// If launched from an IDE terminal with ELECTRON_RUN_AS_NODE=1 (or via `node main.js`),
+// `require("electron")` resolves to the binary path string instead of the Electron API.
+// Re-spawn cleanly with ELECTRON_RUN_AS_NODE deleted so Electron starts in GUI mode.
+if (typeof electron === "string" || !electron.app) {
+  const { spawn } = require("child_process");
+  const cleanEnv = { ...process.env };
+  delete cleanEnv.ELECTRON_RUN_AS_NODE;
+  const electronBin =
+    typeof electron === "string"
+      ? electron
+      : path.join(__dirname, "node_modules", "electron", "dist", "electron.exe");
+  const child = spawn(electronBin, [__dirname, ...process.argv.slice(2)], {
+    env: cleanEnv,
+    stdio: "inherit",
+    windowsHide: false,
+  });
+  child.on("exit", (code) => process.exit(code ?? 0));
+  return;
+}
+
+const { app, BrowserWindow, ipcMain, nativeImage, Notification } = electron;
 const { TrayManager } = require("./tray");
 const { SessionWatcher } = require("./session");
 const { FloatingManager } = require("./floating");
@@ -24,22 +46,28 @@ const { FullscreenDetector } = require("./fullscreen");
 
 /** The URL to load in the main window. Defaults to production, with automatic local fallback if unreachable/404. */
 let COMPANION_URL =
-  process.env.COMPANION_URL || "https://companion-app-pi-seven.vercel.app";
+  process.env.COMPANION_URL || "https://companion-app-pied-chi.vercel.app";
 
 async function resolveCompanionUrl() {
   if (process.env.COMPANION_URL) {
     return process.env.COMPANION_URL;
   }
-  const prodUrl = "https://companion-app-pi-seven.vercel.app";
+  const prodUrl = "https://companion-app-pied-chi.vercel.app";
   const localUrl = "http://localhost:3000";
   try {
-    const res = await fetch(`${prodUrl}/api/health`, { method: "GET" });
+    const res = await fetch(`${prodUrl}/api/health`, {
+      method: "GET",
+      signal: AbortSignal.timeout(2500),
+    });
     if (res.ok) return prodUrl;
   } catch {
     // Production unreachable; try local server
   }
   try {
-    const localRes = await fetch(`${localUrl}/api/health`, { method: "GET" });
+    const localRes = await fetch(`${localUrl}/api/health`, {
+      method: "GET",
+      signal: AbortSignal.timeout(2500),
+    });
     if (localRes.ok) return localUrl;
   } catch {
     // Local server not running either; keep prodUrl
@@ -55,8 +83,8 @@ const MIN_HEIGHT = 640;
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
-  // Another instance is already running — focus it and quit this one.
-  app.quit();
+  // Another instance is already running — focus it and exit this one immediately.
+  app.exit(0);
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -120,11 +148,17 @@ function createMainWindow() {
 
   mainWindow.loadURL(COMPANION_URL);
 
-  mainWindow.webContents.on("did-fail-load", () => {
-    if (isQuitting) return;
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode) => {
+    if (isQuitting || errorCode === -3) return;
+    const safeUrl = JSON.stringify(COMPANION_URL);
+    const retryHtml = `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0b0b1e;color:#f8fafc;font-family:"Segoe UI",system-ui,sans-serif;gap:12px}button{padding:10px 20px;border-radius:999px;border:1px solid rgba(167,139,250,.6);background:rgba(167,139,250,.22);color:#fff;cursor:pointer;font-size:14px}button:hover{background:rgba(167,139,250,.38)}</style></head><body><h2>Couldn't connect to Companion</h2><p style="opacity:.75;font-size:13px">Check your internet connection and try again.</p><button id="retry" type="button">Retry</button><script>document.getElementById("retry").addEventListener("click",function(){window.location.href=${safeUrl};});</script></body></html>`;
+    mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(retryHtml)}`);
     setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.getURL() === "") {
-        mainWindow.loadURL(COMPANION_URL);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const current = mainWindow.webContents.getURL() || "";
+        if (current.startsWith("data:") || current === "") {
+          mainWindow.loadURL(COMPANION_URL);
+        }
       }
     }, 10_000);
   });
@@ -172,6 +206,7 @@ app.whenReady().then(async () => {
   floatingManager = new FloatingManager({
     baseUrl: COMPANION_URL,
     fullscreenDetector,
+    startVisible: true,
     onStateChange: () => {
       if (trayManager) trayManager.updateMenu();
     },
@@ -183,6 +218,7 @@ app.whenReady().then(async () => {
   trayManager = new TrayManager({
     onOpen: () => showWindow(),
     onShowHideNikki: () => toggleNikki(),
+    onBringNikkiToFront: () => bringNikkiToFront(),
     onPause: () => pauseNikki(),
     onResume: () => resumeNikki(),
     onToggleDnd: () => toggleDnd(),
@@ -204,9 +240,19 @@ app.whenReady().then(async () => {
   registerIPC();
 });
 
-// When the second instance tries to launch, focus the existing window.
-app.on("second-instance", () => {
-  showWindow();
+// When the second instance tries to launch, restore/focus the existing instance.
+app.on("second-instance", (_event, argv) => {
+  bringNikkiToFront();
+  if (!argv.includes("--hidden") && !argv.includes("--startup")) {
+    showWindow();
+  }
+});
+
+// Keep background tray + floating Nikki alive even if all windows are closed/hidden.
+app.on("window-all-closed", (event) => {
+  if (!isQuitting) {
+    event.preventDefault();
+  }
 });
 
 // macOS: re-create window when dock icon clicked (not typical for Windows).
@@ -241,8 +287,11 @@ process.on("SIGINT", () => exitApp());
 // ── Window helpers ───────────────────────────────────────────────────────────
 
 function showWindow() {
-  if (!mainWindow) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
     createMainWindow();
+    if (sessionWatcher) {
+      sessionWatcher.setWindow(mainWindow);
+    }
     return;
   }
   mainWindow.show();
@@ -272,6 +321,19 @@ function toggleNikki() {
   }
   if (floatingManager) {
     floatingManager.setVisible(nikkiVisible);
+  }
+  if (trayManager) trayManager.updateMenu();
+}
+
+function bringNikkiToFront() {
+  nikkiVisible = true;
+  nikkiPaused = false;
+  if (floatingManager) {
+    floatingManager.bringToFront();
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("companion:nikki-visibility", true);
+    mainWindow.webContents.send("companion:nikki-pause", false);
   }
   if (trayManager) trayManager.updateMenu();
 }
