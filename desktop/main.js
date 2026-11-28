@@ -36,11 +36,12 @@ if (typeof electron === "string" || !electron.app) {
   return;
 }
 
-const { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, session } = electron;
+const { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, powerMonitor, session } = electron;
 const { TrayManager } = require("./tray");
 const { SessionWatcher } = require("./session");
 const { FloatingManager } = require("./floating");
 const { FullscreenDetector } = require("./fullscreen");
+const { LocalSessionMonitor } = require("./sessionMonitor");
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
@@ -103,6 +104,9 @@ let floatingManager = null;
 
 /** @type {FullscreenDetector | null} */
 let fullscreenDetector = null;
+
+/** @type {LocalSessionMonitor | null} */
+let localSessionMonitor = null;
 
 /** Whether the user genuinely chose "Exit Companion" (vs. window close). */
 let isQuitting = false;
@@ -254,6 +258,34 @@ app.whenReady().then(async () => {
   // Set up session watcher for auth/online status
   sessionWatcher = new SessionWatcher(mainWindow);
 
+  // Set up opt-in local powerMonitor long-session tracker (OFF by default)
+  localSessionMonitor = new LocalSessionMonitor({
+    getSystemIdleTime: () =>
+      typeof powerMonitor?.getSystemIdleTime === "function"
+        ? powerMonitor.getSystemIdleTime()
+        : 0,
+    getConfig: () => ({
+      enabled: Boolean(floatingManager?.store?.get("longSessionEnabled", false)),
+      intervalMinutes: Number(floatingManager?.store?.get("longSessionIntervalMinutes", 90)) || 90,
+    }),
+    canTrigger: () =>
+      Boolean(
+        floatingManager &&
+          floatingManager.visible &&
+          !floatingManager.paused &&
+          !floatingManager.dnd &&
+          !(floatingManager.suppressedByFullscreen && !floatingManager.allowOverFullscreen)
+      ),
+    onThresholdReached: ({ activeMinutes }) => {
+      if (floatingManager?.window && !floatingManager.window.isDestroyed()) {
+        floatingManager.window.webContents.send("companion:long-session-trigger", {
+          activeMinutes,
+        });
+      }
+    },
+  });
+  localSessionMonitor.start();
+
   // Register IPC handlers
   registerIPC();
 });
@@ -315,6 +347,10 @@ function showWindow() {
 function exitApp() {
   console.log("[Main] exitApp()");
   isQuitting = true;
+  if (localSessionMonitor) {
+    localSessionMonitor.stop();
+    localSessionMonitor = null;
+  }
   if (floatingManager) {
     floatingManager.destroy();
     floatingManager = null;
@@ -633,6 +669,9 @@ function claimDesktopNotificationKey(key) {
   ipcMain.handle("companion:get-desktop-settings", () => ({
     autoLaunch: getAutoLaunchEnabled(),
     floatingVisible: nikkiVisible,
+    longSessionEnabled: Boolean(floatingManager?.store?.get("longSessionEnabled", false)),
+    longSessionIntervalMinutes:
+      Number(floatingManager?.store?.get("longSessionIntervalMinutes", 90)) || 90,
   }));
 
   ipcMain.handle("companion:set-desktop-settings", (_event, settings) => {
@@ -649,9 +688,26 @@ function claimDesktopNotificationKey(key) {
       }
       if (trayManager) trayManager.updateMenu();
     }
+    if (settings && typeof settings.longSessionEnabled === "boolean") {
+      floatingManager?.store?.set("longSessionEnabled", settings.longSessionEnabled);
+      if (!settings.longSessionEnabled && localSessionMonitor) {
+        localSessionMonitor.reset();
+      }
+    }
+    if (
+      settings &&
+      typeof settings.longSessionIntervalMinutes === "number" &&
+      Number.isFinite(settings.longSessionIntervalMinutes)
+    ) {
+      const clamped = Math.max(15, Math.min(240, Math.round(settings.longSessionIntervalMinutes)));
+      floatingManager?.store?.set("longSessionIntervalMinutes", clamped);
+    }
     return {
       autoLaunch: getAutoLaunchEnabled(),
       floatingVisible: nikkiVisible,
+      longSessionEnabled: Boolean(floatingManager?.store?.get("longSessionEnabled", false)),
+      longSessionIntervalMinutes:
+        Number(floatingManager?.store?.get("longSessionIntervalMinutes", 90)) || 90,
     };
   });
 }

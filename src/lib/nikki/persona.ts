@@ -649,16 +649,16 @@ export const SCENARIO_TEMPLATES: Record<
   // Scenario: Timetable unstarted
   timetable_unstarted: {
     gentle: [
-      `Hey {name}, '{itemTitle}' was scheduled for a bit ago. Want to ease into it now, or would you like to shift the time?`,
-      `Hi {name}, checking in on '{itemTitle}'. Are you ready to begin, or would a later time feel more comfortable?`,
+      `{name}, '{itemTitle}' was supposed to start at {itemStart}. Want to ease into it now, or shift it a little?`,
+      `Hey {name}, '{itemTitle}' was scheduled for {itemStart}. Are you getting on it, or would a few more minutes help?`,
     ],
     playful: [
-      `Hey {name}! '{itemTitle}' is calling your name! Starting now, or should we shuffle the clock?`,
-      `Tick tock, {name}! '{itemTitle}' started a little bit ago. Ready to dive in, or shifting the schedule?`,
+      `{name}, '{itemTitle}' was supposed to start at {itemStart}. Are you getting on it?`,
+      `Hey {name}! '{itemTitle}' has been waiting since {itemStart} — diving in now or need a quick 10?`,
     ],
     firm: [
-      `Hey {name}, '{itemTitle}' started a little while ago. Are we rolling on this now or shifting the schedule?`,
-      `Schedule update needed, {name}: '{itemTitle}' has passed its start time. Starting now or rescheduling?`,
+      `{name}, '{itemTitle}' was supposed to start at {itemStart}. Are you starting now, or should we reschedule?`,
+      `{name}, '{itemTitle}' passed its {itemStart} start time. Let's either get on it now or pick a new time.`,
     ],
   },
 
@@ -1107,6 +1107,7 @@ export function getPersonaFallbackMessage(
   const duration = String(ctx.durationMinutes || 25);
   const hours = String(ctx.hoursUntilDue || ctx.hoursAway || 3);
   const itemTitle = (ctx.itemTitle as string) || "your scheduled item";
+  const itemStart = (ctx.itemStart as string) || "its scheduled time";
   const completedTasks = String(ctx.completedTasksCount || context.completedTasksCountToday || 0);
   const completedCount = String(ctx.completedCount || ctx.completedTasksCount || context.completedTasksCountToday || 0);
   const completedActivities = String(ctx.completedActivitiesCount || context.completedActivitiesCountToday || 0);
@@ -1124,6 +1125,7 @@ export function getPersonaFallbackMessage(
     duration,
     hours,
     itemTitle,
+    itemStart,
     completedTasks,
     completedCount,
     completedActivities,

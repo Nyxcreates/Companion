@@ -22,8 +22,15 @@ function loadTsModule(relPath) {
     },
   });
   const mod = { exports: {} };
+  const customRequire = (id) => {
+    if (id.startsWith("./")) {
+      const candidate = path.resolve(path.dirname(fullPath), `${id}.ts`);
+      return loadTsModule(path.relative(rootDir, candidate));
+    }
+    return require(id);
+  };
   const fn = new Function("exports", "require", "module", "__filename", "__dirname", outputText);
-  fn(mod.exports, require, mod, fullPath, path.dirname(fullPath));
+  fn(mod.exports, customRequire, mod, fullPath, path.dirname(fullPath));
   return mod.exports;
 }
 

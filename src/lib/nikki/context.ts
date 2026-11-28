@@ -32,6 +32,12 @@ export interface UnstartedStartedItemContext {
   start: string;
   end: string;
   minutesSinceStart: number;
+  scheduleId?: string;
+  itemIndex?: number;
+  uniqueKey?: string;
+  status?: string;
+  remindersSentCount?: number;
+  snoozedUntil?: Date | null;
 }
 
 export interface MissedActivityContext {
@@ -357,8 +363,10 @@ export async function buildNikkiContext(
 
   // Process schedule, unstarted items & missed activities
   const reminderMap = new Map<string, string>();
+  const reminderDocMap = new Map<string, (typeof reminders)[number]>();
   for (const r of reminders) {
     reminderMap.set(`${r.itemStart}_${r.itemTitle}`, r.status);
+    reminderDocMap.set(`${r.itemStart}_${r.itemTitle}`, r);
   }
 
   const scheduleItems: ScheduleItemContext[] = [];
@@ -372,8 +380,12 @@ export async function buildNikkiContext(
   const HOBBY_REGEX = /\b(dance|sing|singing|acting|actor|drama|music|guitar|piano|draw|drawing|paint|art|sketch|write|writing|creative|hobby|hobbies|project|exercise|workout|yoga|run|walk|gym|stretch|rest|relax|meditat|read|reading)\b/i;
 
   if (scheduleDoc?.items) {
-    for (const item of scheduleDoc.items) {
-      const status = reminderMap.get(`${item.start}_${item.title}`) ?? "pending";
+    const scheduleIdStr = String(scheduleDoc._id);
+    for (let itemIndex = 0; itemIndex < scheduleDoc.items.length; itemIndex++) {
+      const item = scheduleDoc.items[itemIndex];
+      const reminderDoc = reminderDocMap.get(`${item.start}_${item.title}`);
+      const status = reminderDoc?.status ?? reminderMap.get(`${item.start}_${item.title}`) ?? "pending";
+      const uniqueKey = reminderDoc?.uniqueKey ?? `${scheduleIdStr}_${itemIndex}`;
       if (status === "done") {
         completedActivitiesCountToday++;
       }
@@ -407,14 +419,37 @@ export async function buildNikkiContext(
           });
         }
 
-        // Item started >= 10 minutes ago, but is not marked started or done
-        if (minutesSinceStart >= 10 && minutesSinceStart <= 120) {
+        // Item start time has passed (>= 1m ago) and not started, done, or skipped
+        if (minutesSinceStart >= 1 && minutesSinceStart <= 240) {
           if (status !== "started" && status !== "done" && status !== "skipped") {
+            const itemPrefix = `${firebaseUid}:timetable_unstarted:${localDate}:${uniqueKey}`;
+            const legacyPrefix = `${firebaseUid}:timetable_unstarted:${localDate}:${item.start}`;
+            const matchingNudges = recentNudges.filter(
+              (n) =>
+                new Date(n.createdAt).getTime() >= startOfDayUtc.getTime() &&
+                (n.idempotencyKey?.startsWith(itemPrefix) || n.idempotencyKey === legacyPrefix)
+            );
+            const activeSnoozeNudge = matchingNudges.find(
+              (n) => n.status === "snoozed" && n.snoozedUntil
+            );
+            const snoozedUntil =
+              activeSnoozeNudge?.snoozedUntil
+                ? new Date(activeSnoozeNudge.snoozedUntil)
+                : reminderDoc?.status === "later" && reminderDoc?.nudgeAt
+                  ? new Date(reminderDoc.nudgeAt)
+                  : null;
+
             unstartedStartedItems.push({
               title: item.title,
               start: item.start,
               end: item.end,
               minutesSinceStart,
+              scheduleId: scheduleIdStr,
+              itemIndex,
+              uniqueKey,
+              status,
+              remindersSentCount: matchingNudges.length,
+              snoozedUntil,
             });
           }
         }

@@ -6,6 +6,8 @@ import { NotificationPreferenceModel } from "@/models/NotificationPreference";
 import { UserModel } from "@/models/User";
 import { getOrCreateActiveConversation, saveMessage, updateConversationTitle } from "@/services/conversationService";
 import { handleReminderAction } from "@/services/timetableReminderService";
+import { TimetableReminderModel } from "@/models/TimetableReminder";
+import { computeSnoozeUntil } from "@/lib/nikki/reminderPolicy";
 import { generateAgentReply, isGeminiConfigured } from "@/lib/ai/gemini";
 import {
   classifyTriggerCategory,
@@ -16,7 +18,7 @@ import { resolveUserTimezone } from "@/lib/time/currentTime";
 
 export const runtime = "nodejs";
 
-type ReminderActionType = "talk" | "snooze" | "acknowledge" | "done" | "dismiss";
+type ReminderActionType = "talk" | "snooze" | "acknowledge" | "start" | "done" | "skip" | "dismiss";
 
 function getLocalDateStr(timezone: string): string {
   try {
@@ -100,9 +102,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
 
     const action = body.action as ReminderActionType | undefined;
-    if (!action || !["talk", "snooze", "acknowledge", "done", "dismiss"].includes(action)) {
+    if (!action || !["talk", "snooze", "acknowledge", "start", "done", "skip", "dismiss"].includes(action)) {
       return NextResponse.json(
-        { error: { message: "Valid action (talk, snooze, acknowledge, done, dismiss) is required.", code: "VALIDATION_ERROR" } },
+        { error: { message: "Valid action (talk, snooze, acknowledge, start, done, skip, dismiss) is required.", code: "VALIDATION_ERROR" } },
         { status: 400 }
       );
     }
@@ -131,7 +133,7 @@ export async function POST(request: NextRequest) {
       const requestedMins = typeof body.minutes === "number" ? body.minutes : undefined;
       const defaultMins = category === "sleep" ? (prefsDoc?.sleepReminderSnoozeMinutes ?? 25) : 15;
       const snoozeMinutes = Math.max(5, Math.min(120, Math.round(requestedMins ?? defaultMins)));
-      const snoozedUntil = new Date(Date.now() + snoozeMinutes * 60_000);
+      const snoozedUntil = computeSnoozeUntil(Date.now(), snoozeMinutes);
 
       if (category === "sleep") {
         await NotificationPreferenceModel.findOneAndUpdate(
@@ -143,10 +145,20 @@ export async function POST(request: NextRequest) {
           nudgeDoc.status = "dismissed";
           await nudgeDoc.save();
         }
-      } else if (nudgeDoc) {
-        nudgeDoc.status = "snoozed";
-        nudgeDoc.snoozedUntil = snoozedUntil;
-        await nudgeDoc.save();
+      } else {
+        if (nudgeDoc) {
+          nudgeDoc.status = "snoozed";
+          nudgeDoc.snoozedUntil = snoozedUntil;
+          await nudgeDoc.save();
+        }
+        const meta = (nudgeDoc?.metadata || rawMetadata || {}) as Record<string, unknown>;
+        const uniqueKey = typeof meta.uniqueKey === "string" ? meta.uniqueKey : undefined;
+        if (uniqueKey) {
+          await TimetableReminderModel.updateOne(
+            { firebaseUid: user.uid, uniqueKey },
+            { $set: { status: "later", nudgeAt: snoozedUntil } }
+          ).catch(() => {});
+        }
       }
 
       return NextResponse.json({
@@ -160,8 +172,14 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // ── 2. ACKNOWLEDGE / DONE / DISMISS ───────────────────────────────────────
-    if (action === "acknowledge" || action === "done" || action === "dismiss") {
+    // ── 2. ACKNOWLEDGE / START / DONE / SKIP / DISMISS ────────────────────────
+    if (
+      action === "acknowledge" ||
+      action === "start" ||
+      action === "done" ||
+      action === "skip" ||
+      action === "dismiss"
+    ) {
       if (category === "sleep") {
         await NotificationPreferenceModel.findOneAndUpdate(
           { firebaseUid: user.uid },
@@ -170,7 +188,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const isCompleted = action === "acknowledge" || action === "done";
+      const isCompleted = action === "acknowledge" || action === "start" || action === "done";
       if (nudgeDoc) {
         nudgeDoc.status = isCompleted ? "done" : "dismissed";
         nudgeDoc.snoozedUntil = null;
@@ -178,10 +196,57 @@ export async function POST(request: NextRequest) {
           nudgeDoc.completedAt = new Date();
         }
         await nudgeDoc.save();
+      }
 
-        if (isCompleted && nudgeDoc.trigger === "timetable_unstarted") {
-          const uniqueKey = nudgeDoc.idempotencyKey.replace(/^.*:timetable_unstarted:/, "");
-          await handleReminderAction({ uniqueKey, action: "start", firebaseUid: user.uid }).catch(() => {});
+      const meta = (nudgeDoc?.metadata || rawMetadata || {}) as Record<string, unknown>;
+      const uniqueKey =
+        (typeof meta.uniqueKey === "string" && meta.uniqueKey) ||
+        (nudgeDoc?.trigger === "timetable_unstarted"
+          ? nudgeDoc.idempotencyKey
+              .replace(/^.*:timetable_unstarted:\d{4}-\d{2}-\d{2}:/, "")
+              .replace(/:r\d+$/, "")
+          : undefined);
+
+      if (uniqueKey && (trigger === "timetable_unstarted" || typeof meta.uniqueKey === "string")) {
+        const timetableAction =
+          action === "done"
+            ? "done"
+            : action === "skip" || action === "dismiss"
+              ? "skip"
+              : "start";
+
+        const res = await handleReminderAction({
+          uniqueKey,
+          action: timetableAction,
+          firebaseUid: user.uid,
+        }).catch(() => ({ success: false }));
+
+        // If no TimetableReminder document existed yet, upsert one so state is persisted server-side
+        if (!res?.success && typeof meta.scheduleId === "string" && typeof meta.itemIndex === "number") {
+          const targetStatus =
+            timetableAction === "done"
+              ? "done"
+              : timetableAction === "skip"
+                ? "skipped"
+                : "started";
+          await TimetableReminderModel.findOneAndUpdate(
+            { uniqueKey },
+            {
+              $set: {
+                firebaseUid: user.uid,
+                scheduleId: meta.scheduleId,
+                scheduleDate: localDate,
+                itemIndex: meta.itemIndex,
+                itemTitle: (meta.itemTitle as string) || "Scheduled task",
+                itemStart: (meta.itemStart as string) || "00:00",
+                itemEnd: (meta.itemEnd as string) || "00:00",
+                itemType: "task",
+                status: targetStatus,
+                nudgeAt: null,
+              },
+            },
+            { upsert: true }
+          ).catch(() => {});
         }
       }
 

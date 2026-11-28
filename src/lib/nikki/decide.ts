@@ -1,5 +1,13 @@
 import type { NikkiContextSnapshot } from "./context";
 import type { NikkiTrigger } from "@/models/NikkiNudge";
+import {
+  buildOverdueGoalIdempotencyKey,
+  buildTimetableNudgeIdempotencyKey,
+  evaluateOverdueGoalEligibility,
+  evaluateTimetableItemEligibility,
+  MAX_ITEM_REMINDERS_PER_DAY,
+  MIN_GAP_BETWEEN_UNPROMPTED_MS,
+} from "./reminderPolicy";
 
 export interface NikkiDecision {
   shouldSpeak: boolean;
@@ -249,27 +257,59 @@ export function decideNikkiNudge(
   }
 
   // 4. TRIGGER: timetable_unstarted
-  // Scheduled item started >= 10m ago and has not been marked started or done
+  // Scheduled item start time has passed and has not been marked started, done, or skipped.
+  // Enforces cap of 3 reminders per item/day, exact snooze timing, and 10-min min gap.
   if (context.unstartedStartedItems.length > 0) {
-    const item = context.unstartedStartedItems[0];
-    const idempotencyKey = `${context.firebaseUid}:timetable_unstarted:${context.localDate}:${item.start}`;
+    const nowMs = Date.now();
+    const lastGlobalNudgeAtMs = context.lastNudge
+      ? new Date(context.lastNudge.createdAt).getTime()
+      : null;
 
-    const isSameRecentNudge =
-      context.lastNudge?.trigger === "timetable_unstarted" &&
-      context.lastNudge?.idempotencyKey === idempotencyKey;
+    for (const item of context.unstartedStartedItems) {
+      const eligibility = evaluateTimetableItemEligibility({
+        status: item.status,
+        remindersSentCount: item.remindersSentCount ?? 0,
+        maxReminders: MAX_ITEM_REMINDERS_PER_DAY,
+        snoozedUntilMs: item.snoozedUntil ? new Date(item.snoozedUntil).getTime() : null,
+        lastGlobalNudgeAtMs,
+        nowMs,
+        minGapMs: MIN_GAP_BETWEEN_UNPROMPTED_MS,
+      });
 
-    if (!isSameRecentNudge) {
+      if (!eligibility.eligible || !eligibility.nextAttempt) {
+        continue;
+      }
+
+      const itemKey = item.uniqueKey || `${item.start}_${item.title}`;
+      const idempotencyKey = buildTimetableNudgeIdempotencyKey(
+        context.firebaseUid,
+        context.localDate,
+        itemKey,
+        eligibility.nextAttempt
+      );
+
+      const alreadyExistsToday = context.recentNudgesToday?.some(
+        (n) => n.idempotencyKey === idempotencyKey
+      );
+      if (alreadyExistsToday) {
+        continue;
+      }
+
       return {
         shouldSpeak: true,
         trigger: "timetable_unstarted",
         priorityScore: 85,
         idempotencyKey,
-        reason: `Scheduled item '${item.title}' started ${item.minutesSinceStart}m ago and is not started.`,
+        reason: `Scheduled item '${item.title}' was supposed to start at ${item.start} (${item.minutesSinceStart}m ago) and is not started.`,
         triggerContext: {
           itemTitle: item.title,
           itemStart: item.start,
           itemEnd: item.end,
           minutesSinceStart: item.minutesSinceStart,
+          uniqueKey: item.uniqueKey,
+          scheduleId: item.scheduleId,
+          itemIndex: item.itemIndex,
+          attemptNumber: eligibility.nextAttempt,
         },
       };
     }
@@ -542,6 +582,49 @@ export function decideNikkiNudge(
           goalId: goodProgressGoal?.id,
           goalTitle: goodProgressGoal?.title,
           progressPercent: goodProgressGoal?.progressPercent,
+        },
+      };
+    }
+  }
+
+  // 11b. TRIGGER: overdue goal — once a day, name one overdue/untouched goal
+  if (context.overdueGoals.length > 0) {
+    const nowMs = Date.now();
+    const lastGlobalNudgeAtMs = context.lastNudge
+      ? new Date(context.lastNudge.createdAt).getTime()
+      : null;
+    const goal = context.overdueGoals[0];
+    const idempotencyKey = buildOverdueGoalIdempotencyKey(
+      context.firebaseUid,
+      context.localDate,
+      goal.id
+    );
+    const alreadySentToday = Boolean(
+      context.recentNudgesToday?.some(
+        (n) =>
+          n.idempotencyKey === idempotencyKey ||
+          (n.trigger === "goal_neglected" && n.idempotencyKey?.includes(":goal_overdue:"))
+      )
+    );
+    const eligibility = evaluateOverdueGoalEligibility({
+      alreadySentToday,
+      lastGlobalNudgeAtMs,
+      nowMs,
+      minGapMs: MIN_GAP_BETWEEN_UNPROMPTED_MS,
+    });
+
+    if (eligibility.eligible) {
+      return {
+        shouldSpeak: true,
+        trigger: "goal_neglected",
+        priorityScore: 60,
+        idempotencyKey,
+        reason: `Goal '${goal.title}' is overdue and hasn't been touched today.`,
+        triggerContext: {
+          goalId: goal.id,
+          goalTitle: goal.title,
+          daysSinceUpdated: goal.daysSinceUpdated,
+          isOverdueGoal: true,
         },
       };
     }

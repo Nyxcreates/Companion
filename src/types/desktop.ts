@@ -59,11 +59,26 @@ export interface CompanionDesktopAPI {
   /** Open the main Companion conversation window (optionally focused on a new conversation or nudge). */
   openMainConversation: (payload?: string | { conversationId?: string; nudgeId?: string; focusOnly?: boolean }) => void;
 
-  /** Read desktop-specific settings (autoLaunch, floatingVisible). */
-  getDesktopSettings?: () => Promise<{ autoLaunch: boolean; floatingVisible: boolean }>;
+  /** Read desktop-specific settings (autoLaunch, floatingVisible, longSessionEnabled, longSessionIntervalMinutes). */
+  getDesktopSettings?: () => Promise<{
+    autoLaunch: boolean;
+    floatingVisible: boolean;
+    longSessionEnabled?: boolean;
+    longSessionIntervalMinutes?: number;
+  }>;
 
-  /** Update desktop-specific settings (autoLaunch, floatingVisible). */
-  setDesktopSettings?: (settings: { autoLaunch?: boolean; floatingVisible?: boolean }) => Promise<{ autoLaunch: boolean; floatingVisible: boolean }>;
+  /** Update desktop-specific settings. */
+  setDesktopSettings?: (settings: {
+    autoLaunch?: boolean;
+    floatingVisible?: boolean;
+    longSessionEnabled?: boolean;
+    longSessionIntervalMinutes?: number;
+  }) => Promise<{
+    autoLaunch: boolean;
+    floatingVisible: boolean;
+    longSessionEnabled?: boolean;
+    longSessionIntervalMinutes?: number;
+  }>;
 
   /** Listen for main-process requests to open a specific conversationId in the chat UI. */
   onOpenConversationId?: (callback: (conversationId: string) => void) => () => void;
@@ -76,6 +91,9 @@ export interface CompanionDesktopAPI {
 
   /** Listen for floating overlay state updates. */
   onFloatingState: (callback: (state: FloatingOverlayState) => void) => () => void;
+
+  /** Listen for local powerMonitor long-session triggers. */
+  onLongSessionTrigger?: (callback: (payload: { activeMinutes: number }) => void) => () => void;
 }
 
 declare global {

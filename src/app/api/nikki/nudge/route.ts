@@ -7,6 +7,11 @@ import { buildNikkiContext } from "@/lib/nikki/context";
 import { decideNikkiNudge } from "@/lib/nikki/decide";
 import { speakNikkiNudge } from "@/lib/nikki/speak";
 import { signNudgeActionToken } from "@/lib/nikki/actionToken";
+import {
+  buildLongLaptopSessionIdempotencyKey,
+  hasMinGapElapsed,
+  MIN_GAP_BETWEEN_UNPROMPTED_MS,
+} from "@/lib/nikki/reminderPolicy";
 
 export const runtime = "nodejs";
 
@@ -86,25 +91,45 @@ export async function GET(request: NextRequest) {
 
     const now = new Date();
     const prefs = await NotificationPreferenceModel.findOne({ firebaseUid: user.uid })
-      .select("sleepReminderSnoozeMinutes")
+      .select("sleepReminderSnoozeMinutes pausedUntil proactiveEnabled")
       .lean();
     const snoozeMinutes = prefs?.sleepReminderSnoozeMinutes ?? 25;
 
-    // 1. Atomically wake up any snoozed nudge whose snoozedUntil has arrived
-    const dueSnoozed = await NikkiNudgeModel.findOneAndUpdate(
-      {
-        firebaseUid: user.uid,
-        status: "snoozed",
-        snoozedUntil: { $lte: now },
-      },
-      {
-        $set: { status: "delivered", snoozedUntil: null, deliveredAt: now },
-      },
-      { sort: { snoozedUntil: 1 }, new: true }
-    );
+    // Respect pause preference
+    if (prefs?.pausedUntil && new Date(prefs.pausedUntil) > now) {
+      return NextResponse.json({ data: null });
+    }
 
-    if (dueSnoozed) {
-      return NextResponse.json({ data: serializeNudge(dueSnoozed, snoozeMinutes) });
+    // Check minimum 10-minute gap since last delivered/created unprompted nudge
+    const lastDelivered = await NikkiNudgeModel.findOne({
+      firebaseUid: user.uid,
+      status: { $in: ["delivered", "replied", "done"] },
+    })
+      .sort({ deliveredAt: -1, createdAt: -1 })
+      .select("deliveredAt createdAt")
+      .lean();
+    const lastDeliveredMs = lastDelivered
+      ? new Date(lastDelivered.deliveredAt || lastDelivered.createdAt).getTime()
+      : null;
+
+    // 1. Atomically wake up any snoozed nudge whose snoozedUntil has arrived
+    //    (Note: snooze intervals are >= 5-15m, and we still enforce the 10-min gap)
+    if (hasMinGapElapsed(lastDeliveredMs, now.getTime(), MIN_GAP_BETWEEN_UNPROMPTED_MS)) {
+      const dueSnoozed = await NikkiNudgeModel.findOneAndUpdate(
+        {
+          firebaseUid: user.uid,
+          status: "snoozed",
+          snoozedUntil: { $lte: now },
+        },
+        {
+          $set: { status: "delivered", snoozedUntil: null, deliveredAt: now },
+        },
+        { sort: { snoozedUntil: 1 }, new: true }
+      );
+
+      if (dueSnoozed) {
+        return NextResponse.json({ data: serializeNudge(dueSnoozed, snoozeMinutes) });
+      }
     }
 
     // 2. Atomically claim an undelivered ("created") nudge — never re-deliver already "delivered" nudges
@@ -155,5 +180,84 @@ export async function GET(request: NextRequest) {
     }
     console.error("[Companion Nudge] GET error:", error);
     return NextResponse.json({ error: { message: "Failed to fetch pending nudge.", code: "INTERNAL_ERROR" } }, { status: 500 });
+  }
+}
+
+/**
+ * POST /api/nikki/nudge
+ *
+ * Triggered ONLY when the opt-in desktop long-laptop-session timer reaches its
+ * interval with local idle-time tracking. Receives only `{ activeMinutes, timezone }`
+ * — never app names, window titles, keystrokes, or screen data.
+ */
+export async function POST(request: NextRequest) {
+  try {
+    const user = await requireAuthenticatedUser(request);
+    const body = await request.json().catch(() => ({}));
+    const activeMinutes = typeof body.activeMinutes === "number" ? Math.round(body.activeMinutes) : 90;
+    const clientTimezone = typeof body.timezone === "string" ? body.timezone : null;
+
+    await connectToDatabase();
+    const now = new Date();
+    const context = await buildNikkiContext(user.uid, now, clientTimezone);
+
+    if (!context.proactiveEnabled || context.isPaused || context.isQuietHours) {
+      return NextResponse.json({ data: null });
+    }
+
+    // Only nudge if the user actually has a pending task or unstarted timetable item
+    const pendingItem = context.unstartedStartedItems[0];
+    const pendingTask = context.pendingTasks[0];
+    if (!pendingItem && !pendingTask) {
+      return NextResponse.json({ data: null });
+    }
+
+    const lastGlobalMs = context.lastNudge ? new Date(context.lastNudge.createdAt).getTime() : null;
+    if (!hasMinGapElapsed(lastGlobalMs, now.getTime(), MIN_GAP_BETWEEN_UNPROMPTED_MS)) {
+      return NextResponse.json({ data: null });
+    }
+
+    const bucket = Math.floor(now.getTime() / (60 * 60 * 1000));
+    const idempotencyKey = buildLongLaptopSessionIdempotencyKey(user.uid, context.localDate, bucket);
+
+    const targetTitle = pendingItem?.title || pendingTask?.title || "your pending task";
+    const nudge = await speakNikkiNudge(context, {
+      shouldSpeak: true,
+      trigger: "long_session",
+      idempotencyKey,
+      reason: `User has been continuously active for ~${activeMinutes}m with '${targetTitle}' pending.`,
+      triggerContext: {
+        activeMinutes,
+        itemTitle: pendingItem?.title || pendingTask?.title,
+        itemStart: pendingItem?.start,
+        uniqueKey: pendingItem?.uniqueKey,
+        scheduleId: pendingItem?.scheduleId,
+        itemIndex: pendingItem?.itemIndex,
+        taskId: pendingTask?.id,
+        isLongLaptopSession: true,
+      },
+    });
+
+    if (!nudge) {
+      return NextResponse.json({ data: null });
+    }
+
+    if (nudge.status !== "delivered") {
+      nudge.status = "delivered";
+      nudge.deliveredAt = now;
+      await nudge.save();
+    }
+
+    const prefs = await NotificationPreferenceModel.findOne({ firebaseUid: user.uid })
+      .select("sleepReminderSnoozeMinutes")
+      .lean();
+
+    return NextResponse.json({ data: serializeNudge(nudge, prefs?.sleepReminderSnoozeMinutes ?? 25) });
+  } catch (error) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: { message: error.message, code: error.code } }, { status: error.status });
+    }
+    console.error("[Companion Nudge] POST error:", error);
+    return NextResponse.json({ error: { message: "Failed to trigger long-session nudge.", code: "INTERNAL_ERROR" } }, { status: 500 });
   }
 }

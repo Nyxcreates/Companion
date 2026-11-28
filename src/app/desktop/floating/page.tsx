@@ -29,20 +29,25 @@ import type { FloatingNudgePayload, FloatingOverlayState } from "@/types/desktop
 const AUTO_COLLAPSE_MS = 90_000;
 const NUDGE_POLL_MS = 45_000;
 
-type ReminderKind = "sleep" | "study" | "hobby" | "upcoming" | "checkin";
+type ReminderKind = "sleep" | "timetable" | "overdue_goal" | "study" | "hobby" | "upcoming" | "checkin";
 
-function classifyTrigger(trigger?: string | null): ReminderKind {
+function classifyTrigger(trigger?: string | null, metadata?: Record<string, unknown>): ReminderKind {
   switch (trigger) {
     case "sleep_reminder":
     case "late_night":
     case "unusually_late":
       return "sleep";
-    case "study_reminder":
     case "timetable_unstarted":
-    case "deadline_approaching":
-    case "task_overdue":
-    case "task_unfinished":
     case "activity_missed":
+      return "timetable";
+    case "long_session":
+      return metadata?.isLongLaptopSession ? "timetable" : "checkin";
+    case "goal_neglected":
+    case "task_overdue":
+      return "overdue_goal";
+    case "study_reminder":
+    case "deadline_approaching":
+    case "task_unfinished":
       return "study";
     case "hobby_reminder":
       return "hobby";
@@ -275,11 +280,44 @@ export default function FloatingNikkiPage() {
       }
     });
 
+    const unsubLongSession = desktop.onLongSessionTrigger?.(async ({ activeMinutes }) => {
+      if (!firebaseUser || !navigator.onLine) return;
+      try {
+        const res = await authFetch("/api/nikki/nudge", {
+          method: "POST",
+          body: JSON.stringify({
+            activeMinutes,
+            timezone: getTimezone(),
+          }),
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        const data = json?.data;
+        if (data?.id) {
+          lastSeenNudgeIdRef.current = data.id;
+          setActionError(null);
+          setOverlayState((prev) => ({ ...prev, minimized: false }));
+          window.companionDesktop?.setFloatingMinimized(false);
+          setNudge({
+            id: data.id,
+            trigger: data.trigger,
+            message: data.message,
+            pose: data.pose || "concerned",
+            strictness: data.strictness,
+            metadata: data.metadata || {},
+          });
+        }
+      } catch {
+        // Ignore transient network errors
+      }
+    });
+
     return () => {
       unsubNudge();
       unsubState();
+      unsubLongSession?.();
     };
-  }, []);
+  }, [firebaseUser]);
 
   // Background polling independent of whether the Companion website is open
   useEffect(() => {
@@ -486,6 +524,37 @@ export default function FloatingNikkiPage() {
     [firebaseUser, isActing, nudge]
   );
 
+  const handleTimetableAction = useCallback(
+    async (e: React.MouseEvent, actionType: "start" | "done" | "skip") => {
+      e.stopPropagation();
+      if (isActing) return;
+      clearLocalSnoozeTimer();
+      setIsActing(true);
+      setActionError(null);
+      const activeNudge = nudge;
+      setNudge(null);
+      try {
+        if (firebaseUser) {
+          await authFetch("/api/nikki/nudge/action", {
+            method: "POST",
+            body: JSON.stringify({
+              action: actionType,
+              nudgeId: activeNudge?.id || undefined,
+              trigger: activeNudge?.trigger || "timetable_unstarted",
+              metadata: activeNudge?.metadata || {},
+              timezone: getTimezone(),
+            }),
+          });
+        }
+      } catch {
+        setActionError("Action failed — check connection.");
+      } finally {
+        setIsActing(false);
+      }
+    },
+    [firebaseUser, isActing, nudge]
+  );
+
   const handleDismiss = useCallback(
     async (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -550,7 +619,7 @@ export default function FloatingNikkiPage() {
     window.companionDesktop?.hideFloatingNikki();
   }, []);
 
-  const reminderKind = classifyTrigger(nudge?.trigger);
+  const reminderKind = classifyTrigger(nudge?.trigger, nudge?.metadata);
   const sleepSnoozeMins =
     typeof nudge?.metadata?.sleepReminderSnoozeMinutes === "number"
       ? nudge.metadata.sleepReminderSnoozeMinutes
@@ -710,6 +779,86 @@ export default function FloatingNikkiPage() {
                   >
                     <MessageCircle className="h-3 w-3" />
                     Talk to Nikki
+                  </button>
+                </>
+              )}
+
+              {reminderKind === "timetable" && (
+                <>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={(e) => handleTimetableAction(e, "start")}
+                    className="inline-flex items-center gap-1 rounded-xl border border-emerald-400/30 bg-emerald-500/20 px-2.5 py-1.5 text-[11px] font-medium text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-50"
+                  >
+                    <Check className="h-3 w-3" />
+                    I&apos;m doing it now
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={(e) => handleSnooze(e, 10)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-white/15 bg-white/10 px-2.5 py-1.5 text-[11px] font-medium text-white/90 transition hover:bg-white/20 disabled:opacity-50"
+                  >
+                    <Clock className="h-3 w-3" />
+                    Remind me in 10 min
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={(e) => handleSnooze(e, 15)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-white/15 bg-white/10 px-2.5 py-1.5 text-[11px] font-medium text-white/90 transition hover:bg-white/20 disabled:opacity-50"
+                  >
+                    <Clock className="h-3 w-3" />
+                    Remind me in 15 min
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={(e) => handleTimetableAction(e, "done")}
+                    className="inline-flex items-center gap-1 rounded-xl bg-violet-500 px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-violet-400 disabled:opacity-50"
+                  >
+                    <Check className="h-3 w-3" />
+                    Done already
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={(e) => handleTimetableAction(e, "skip")}
+                    className="inline-flex items-center gap-1 rounded-xl border border-white/15 bg-white/10 px-2.5 py-1.5 text-[11px] font-medium text-white/75 transition hover:bg-white/20 disabled:opacity-50"
+                  >
+                    Skip today
+                  </button>
+                </>
+              )}
+
+              {reminderKind === "overdue_goal" && (
+                <>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={handleTalkToNikki}
+                    className="inline-flex items-center gap-1 rounded-xl bg-violet-500 px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-violet-400 disabled:opacity-50"
+                  >
+                    <MessageCircle className="h-3 w-3" />
+                    Work on it now
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={(e) => handleSnooze(e, 60)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-white/15 bg-white/10 px-2.5 py-1.5 text-[11px] font-medium text-white/90 transition hover:bg-white/20 disabled:opacity-50"
+                  >
+                    <Clock className="h-3 w-3" />
+                    Remind me later
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={handleDismiss}
+                    className="inline-flex items-center gap-1 rounded-xl border border-white/15 bg-white/10 px-2.5 py-1.5 text-[11px] font-medium text-white/75 transition hover:bg-white/20 disabled:opacity-50"
+                  >
+                    Not today
                   </button>
                 </>
               )}

@@ -175,4 +175,15 @@ contextBridge.exposeInMainWorld("companionDesktop", {
     ipcRenderer.on("companion:floating-state", handler);
     return () => ipcRenderer.removeListener("companion:floating-state", handler);
   },
+
+  /**
+   * Listen for local powerMonitor long-session triggers (opt-in, off by default).
+   * @param {(payload: { activeMinutes: number }) => void} callback
+   * @returns {() => void} unsubscribe function
+   */
+  onLongSessionTrigger: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("companion:long-session-trigger", handler);
+    return () => ipcRenderer.removeListener("companion:long-session-trigger", handler);
+  },
 });

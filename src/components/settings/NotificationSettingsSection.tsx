@@ -123,6 +123,8 @@ export function NotificationSettingsSection() {
   const [isDesktop, setIsDesktop] = useState(false);
   const [desktopAutoLaunch, setDesktopAutoLaunch] = useState(false);
   const [desktopFloatingVisible, setDesktopFloatingVisible] = useState(true);
+  const [desktopLongSessionEnabled, setDesktopLongSessionEnabled] = useState(false);
+  const [desktopLongSessionInterval, setDesktopLongSessionInterval] = useState(90);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -136,6 +138,10 @@ export function NotificationSettingsSection() {
           if (s) {
             setDesktopAutoLaunch(Boolean(s.autoLaunch));
             setDesktopFloatingVisible(Boolean(s.floatingVisible));
+            setDesktopLongSessionEnabled(Boolean(s.longSessionEnabled));
+            if (typeof s.longSessionIntervalMinutes === "number") {
+              setDesktopLongSessionInterval(s.longSessionIntervalMinutes);
+            }
           }
         }).catch(() => {});
       }
@@ -752,6 +758,56 @@ export function NotificationSettingsSection() {
                   className="rounded border-white/20 bg-white/10 text-cyan-400 focus:ring-0"
                 />
               </label>
+            )}
+
+            {/* Remind me about long laptop sessions (Electron Desktop only, opt-in, off by default) */}
+            {isDesktop && (
+              <div className="sm:col-span-2 rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={desktopLongSessionEnabled}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setDesktopLongSessionEnabled(next);
+                        window.companionDesktop
+                          ?.setDesktopSettings?.({ longSessionEnabled: next })
+                          .catch(() => {});
+                      }}
+                      className="rounded border-white/20 bg-white/10 text-cyan-400 focus:ring-0"
+                    />
+                    <span className="text-xs font-medium text-white">
+                      Remind me about long laptop sessions
+                    </span>
+                  </label>
+
+                  {desktopLongSessionEnabled && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-ink-muted">After</span>
+                      <select
+                        value={desktopLongSessionInterval}
+                        onChange={(e) => {
+                          const mins = Number(e.target.value);
+                          setDesktopLongSessionInterval(mins);
+                          window.companionDesktop
+                            ?.setDesktopSettings?.({ longSessionIntervalMinutes: mins })
+                            .catch(() => {});
+                        }}
+                        className="rounded-lg border border-white/15 bg-white/5 px-2 py-1 text-xs text-white focus:border-cyan-400 focus:outline-none"
+                      >
+                        <option value={45} className="bg-[#14132a]">45 min</option>
+                        <option value={60} className="bg-[#14132a]">60 min</option>
+                        <option value={90} className="bg-[#14132a]">90 min (default)</option>
+                        <option value={120} className="bg-[#14132a]">120 min</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+                <p className="text-[11px] text-ink-muted leading-snug">
+                  Measures only local system idle time via Electron to estimate continuous active computer time — no app names, window titles, keystrokes, or screen data are ever read or sent.
+                </p>
+              </div>
             )}
           </div>
         </div>
