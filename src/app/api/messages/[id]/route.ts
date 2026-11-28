@@ -117,6 +117,15 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       } catch (genError) {
         // eslint-disable-next-line no-console
         console.error("[Companion] Failed to regenerate assistant response after message edit:", genError);
+        return NextResponse.json(
+          {
+            error: {
+              message: "Your message was updated, but Nikki couldn't regenerate her reply. Please retry.",
+              code: "REGENERATION_FAILED",
+            },
+          },
+          { status: 502 }
+        );
       }
     }
 

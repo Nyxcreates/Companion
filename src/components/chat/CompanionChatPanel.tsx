@@ -43,6 +43,8 @@ interface ChatResponseData {
   actions: unknown[];
   needsClarification: boolean;
   conversationId: string;
+  userMessageId?: string;
+  assistantMessageId?: string;
   schedule: ScheduleSummary | null;
   scheduleDeleted?: string | null;
   companionSignal?: { state: string; pose: string } | null;
@@ -206,7 +208,8 @@ export function CompanionChatPanel({
       setInput("");
     }
 
-    const userTurn: DisplayTurn = { id: crypto.randomUUID(), role: "user", text: message };
+    const tempUserId = crypto.randomUUID();
+    const userTurn: DisplayTurn = { id: tempUserId, role: "user", text: message };
     setTurns((prev) => [...prev, userTurn]);
     setIsSending(true);
 
@@ -240,7 +243,11 @@ export function CompanionChatPanel({
       onConversationResolved(agentResponse.conversationId);
 
       setTurns((prev) => {
-        let updated = [...prev];
+        let updated = prev.map((t) =>
+          t.id === tempUserId && agentResponse.userMessageId
+            ? { ...t, id: agentResponse.userMessageId }
+            : t
+        );
         // If a schedule was deleted, remove any rendered schedule for that date
         if (agentResponse.scheduleDeleted) {
           updated = updated.map((t) =>
@@ -252,7 +259,7 @@ export function CompanionChatPanel({
         return [
           ...updated,
           {
-            id: crypto.randomUUID(),
+            id: agentResponse.assistantMessageId ?? crypto.randomUUID(),
             role: "nikki",
             text: agentResponse.message,
             schedule: agentResponse.schedule ?? undefined,
@@ -351,19 +358,33 @@ export function CompanionChatPanel({
         // Update the edited user message
         nextTurns[turnIndex] = {
           ...nextTurns[turnIndex],
+          id: savedMsg.id || nextTurns[turnIndex].id,
           text: savedMsg.text,
         };
 
-        // If an assistant message was regenerated, update the subsequent assistant turn
-        if (assistantMessage && turnIndex + 1 < nextTurns.length && nextTurns[turnIndex + 1].role === "nikki") {
-          nextTurns[turnIndex + 1] = {
-            ...nextTurns[turnIndex + 1],
-            text: assistantMessage.text,
-            schedule: assistantMessage.schedule ?? nextTurns[turnIndex + 1].schedule,
-            scheduleDate: assistantMessage.scheduleDate ?? nextTurns[turnIndex + 1].scheduleDate,
-            scheduleId: assistantMessage.scheduleId ?? nextTurns[turnIndex + 1].scheduleId,
-            scheduleDeleted: false,
-          };
+        // If an assistant message was regenerated, replace the subsequent assistant turn
+        if (assistantMessage) {
+          if (turnIndex + 1 < nextTurns.length && nextTurns[turnIndex + 1].role === "nikki") {
+            nextTurns[turnIndex + 1] = {
+              ...nextTurns[turnIndex + 1],
+              id: assistantMessage.id,
+              text: assistantMessage.text,
+              schedule: assistantMessage.schedule ?? nextTurns[turnIndex + 1].schedule,
+              scheduleDate: assistantMessage.scheduleDate ?? nextTurns[turnIndex + 1].scheduleDate,
+              scheduleId: assistantMessage.scheduleId ?? nextTurns[turnIndex + 1].scheduleId,
+              scheduleDeleted: false,
+            };
+          } else {
+            nextTurns.splice(turnIndex + 1, 0, {
+              id: assistantMessage.id,
+              role: "nikki",
+              text: assistantMessage.text,
+              schedule: assistantMessage.schedule ?? undefined,
+              scheduleDate: assistantMessage.scheduleDate ?? null,
+              scheduleId: assistantMessage.scheduleId ?? null,
+              scheduleDeleted: false,
+            });
+          }
         }
 
         return nextTurns;
@@ -540,11 +561,39 @@ export function CompanionChatPanel({
                       <textarea
                         value={editText}
                         onChange={(e) => setEditText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (!isSavingEdit) {
+                              handleCancelEdit();
+                            }
+                            return;
+                          }
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                            e.preventDefault();
+                            handleSaveEdit(turn.id);
+                          }
+                        }}
+                        disabled={isSavingEdit}
                         className="w-full resize-y rounded-xl border border-white/15 bg-white/5 p-2.5 text-sm text-ink-primary placeholder:text-ink-muted focus:border-accent-secondary focus:outline-none"
                         rows={3}
                         autoFocus
                       />
-                      {editError && <p className="text-xs text-danger">{editError}</p>}
+                      {editError && (
+                        <div className="flex items-center justify-between gap-2 rounded-lg border border-danger/20 bg-danger/10 px-2.5 py-1.5 text-xs text-danger">
+                          <span>{editError}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveEdit(turn.id)}
+                            disabled={isSavingEdit || !editText.trim()}
+                            className="flex shrink-0 items-center gap-1 font-medium underline hover:text-danger/80 disabled:opacity-50"
+                          >
+                            <RotateCcw className="h-3 w-3" /> Retry
+                          </button>
+                        </div>
+                      )}
                       <div className="flex items-center justify-end gap-2">
                         <Button
                           variant="ghost"
@@ -578,7 +627,7 @@ export function CompanionChatPanel({
 
                       {/* Action buttons (Edit for user, Copy for Nikki) */}
                       <div className="mt-1 flex items-center gap-1.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
-                        {isUser && (
+                        {isUser && !isSending && (
                           <button
                             type="button"
                             onClick={() => handleStartEdit(turn)}

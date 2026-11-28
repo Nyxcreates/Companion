@@ -211,6 +211,8 @@ export async function POST(request: NextRequest) {
         actions: agentResponse.actions,
         needsClarification: agentResponse.needsClarification,
         conversationId,
+        userMessageId: String(userMessageDoc._id),
+        assistantMessageId: String(assistantMessageDoc._id),
         schedule,
         scheduleDeleted,
         companionSignal,
