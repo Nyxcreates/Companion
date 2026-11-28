@@ -10,6 +10,7 @@ import {
   getPersonaFallbackMessage,
   getRecentNudgeMessages,
 } from "./persona";
+import { normalizeGreetingForHour } from "./greeting";
 
 export {
   buildNikkiSystemPersona,
@@ -80,6 +81,8 @@ export async function speakNikkiNudge(
   if (!messageText) {
     messageText = getPersonaFallbackMessage(context, decision, recentMessagesSet);
   }
+
+  messageText = normalizeGreetingForHour(messageText, context.currentHour);
 
   // Persist NikkiNudge document atomically (unique idempotencyKey prevents concurrent duplicates)
   let nudge: NikkiNudgeDocument;

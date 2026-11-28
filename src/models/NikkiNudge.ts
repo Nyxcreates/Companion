@@ -1,7 +1,7 @@
 import mongoose, { Schema, type Document, type Model } from "mongoose";
 import type { NikkiStrictness } from "@/types/notification";
 
-export type NikkiNudgeStatus = "created" | "delivered" | "replied" | "dismissed" | "snoozed" | "expired";
+export type NikkiNudgeStatus = "created" | "delivered" | "replied" | "done" | "dismissed" | "snoozed" | "expired";
 
 export type NikkiTrigger =
   | "no_timetable"
@@ -39,6 +39,8 @@ export interface NikkiNudgeDocument extends Document {
   idempotencyKey: string;
   strictness: NikkiStrictness;
   snoozedUntil?: Date | null;
+  deliveredAt?: Date | null;
+  completedAt?: Date | null;
   metadata?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
@@ -83,7 +85,7 @@ const NikkiNudgeSchema = new Schema<NikkiNudgeDocument>(
     message: { type: String, required: true },
     status: {
       type: String,
-      enum: ["created", "delivered", "replied", "dismissed", "snoozed", "expired"],
+      enum: ["created", "delivered", "replied", "done", "dismissed", "snoozed", "expired"],
       default: "created",
       index: true,
     },
@@ -94,6 +96,8 @@ const NikkiNudgeSchema = new Schema<NikkiNudgeDocument>(
       default: "playful",
     },
     snoozedUntil: { type: Date, default: null },
+    deliveredAt: { type: Date, default: null },
+    completedAt: { type: Date, default: null },
     metadata: { type: Schema.Types.Mixed, default: () => ({}) },
   },
   { timestamps: true }

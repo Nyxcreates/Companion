@@ -516,6 +516,43 @@ export function NikkiProactivePresence() {
     return () => clearInterval(interval);
   }, [firebaseUser]);
 
+const SHOWN_NUDGE_KEYS_STORAGE = "companion:shown-nudge-keys";
+const SHOWN_KEY_TTL_MS = 48 * 60 * 60 * 1000;
+
+function readShownNudgeKeys(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(SHOWN_NUDGE_KEYS_STORAGE);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    const cutoff = Date.now() - SHOWN_KEY_TTL_MS;
+    const pruned: Record<string, number> = {};
+    for (const [k, ts] of Object.entries(parsed)) {
+      if (typeof ts === "number" && ts >= cutoff) pruned[k] = ts;
+    }
+    return pruned;
+  } catch {
+    return {};
+  }
+}
+
+function hasShownNudgeKey(key: string): boolean {
+  if (!key) return false;
+  const map = readShownNudgeKeys();
+  return Boolean(map[key]);
+}
+
+function markNudgeKeyShown(key: string): void {
+  if (!key || typeof window === "undefined") return;
+  try {
+    const map = readShownNudgeKeys();
+    map[key] = Date.now();
+    localStorage.setItem(SHOWN_NUDGE_KEYS_STORAGE, JSON.stringify(map));
+  } catch {
+    // ignore storage errors
+  }
+}
+
   // ── Nudge Poller: fetch pending nudges when app opens and every 60s ────────
   const fetchPendingNudge = useCallback(async () => {
     if (!firebaseUser) return;
@@ -528,6 +565,11 @@ export function NikkiProactivePresence() {
       if (!res.ok) return;
       const env = await res.json();
       if (env?.data) {
+        const key = String(env.data.idempotencyKey || env.data.id || "");
+        if (key && hasShownNudgeKey(key)) {
+          return;
+        }
+        if (key) markNudgeKeyShown(key);
         setActiveNudge(env.data);
         try {
           window.dispatchEvent(
@@ -1012,7 +1054,7 @@ export function NikkiProactivePresence() {
           ],
         };
         try { localStorage.removeItem("companion:user-state"); } catch {}
-      } else if (storedUserState.state === "sleeping" && localHour >= 5 && localHour < 14) {
+      } else if (storedUserState.state === "sleeping" && localHour >= 5 && localHour < 12) {
         const picked = pickGreetingVariant([
           {
             message: "Good morninggg! ☀️ Hope you slept peacefully! Ready for today?",

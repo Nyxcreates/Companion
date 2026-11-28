@@ -253,7 +253,22 @@ self.addEventListener("notificationclick", (event) => {
   var uniqueKey      = notifData.uniqueKey;
   var breakSessionId = notifData.breakSessionId;
   var nudgeId        = notifData.nudgeId;
+  var doneToken      = notifData.doneToken;
+  var snoozeToken    = notifData.snoozeToken;
   var action         = event.action || "";
+
+  // ── Signed Nudge Action (Done / Snooze from Push Notification) ────────────
+  if ((action === "done" && doneToken) || (action === "snooze" && snoozeToken)) {
+    var actionToken = action === "done" ? doneToken : snoozeToken;
+    event.waitUntil(
+      fetch("/api/nikki/nudge/action-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: actionToken }),
+      }).catch(function () {})
+    );
+    return;
+  }
 
   // ── Break notification actions ─────────────────────────────────────────────
   if (breakSessionId) {

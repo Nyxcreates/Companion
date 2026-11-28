@@ -40,7 +40,7 @@ export function decideNikkiNudge(
     context.checkInFrequency === "frequent" ? 6 : context.checkInFrequency === "gentle" ? 2 : DEFAULT_MAX_DAILY_NUDGES;
 
   const maxDailyNudges = options.maxDailyNudges ?? freqMax;
-  const minGapMinutes = options.minGapMinutes ?? freqGap;
+  const minGapMinutes = Math.max(10, options.minGapMinutes ?? freqGap);
   const backoffThreshold = options.backoffThreshold ?? DEFAULT_BACKOFF_THRESHOLD;
 
   // ── Guard 1: Proactive toggle ──────────────────────────────────────────────
@@ -340,19 +340,25 @@ export function decideNikkiNudge(
   }
 
   // 6. TRIGGER: morning_checkin / morning_plan
-  // Fires in the morning starting at user's preferred morningCheckInTime (default 08:00) through +2.5h
+  // Fires only in the morning (< 12:00 local time) starting at user's preferred morningCheckInTime (default 08:00) through +2.5h
   const [mH, mM] = (context.morningCheckInTime || "08:00").split(":").map(Number);
   const morningStartMins = (Number.isFinite(mH) ? mH : 8) * 60 + (Number.isFinite(mM) ? mM : 0);
-  const morningEndMins = Math.max(morningStartMins + 150, 10 * 60 + 30);
+  const morningEndMins = Math.min(12 * 60 - 1, Math.max(morningStartMins + 150, 10 * 60 + 30));
 
   if (
     context.morningCheckInEnabled !== false &&
+    context.currentHour < 12 &&
     context.totalMinutes >= Math.max(wakeTotalMins, morningStartMins) &&
     context.totalMinutes <= morningEndMins
   ) {
     const idempotencyKey = `${context.firebaseUid}:morning_plan:${context.localDate}`;
-    const alreadySentToday = context.lastNudge?.trigger === "morning_plan" &&
-      isSameDay(context.lastNudge.createdAt, context.localDate);
+    const todayNudges = context.recentNudgesToday ?? (context.lastNudge ? [context.lastNudge] : []);
+    const alreadySentToday = todayNudges.some(
+      (n) =>
+        n.idempotencyKey === idempotencyKey ||
+        ((n.trigger === "morning_plan" || n.trigger === "morning_checkin") &&
+          isSameDay(n.createdAt, context.localDate))
+    );
 
     if (!alreadySentToday) {
       const firstTaskTitle =
@@ -378,7 +384,10 @@ export function decideNikkiNudge(
   // 7. TRIGGER: app_opened (First open of the day)
   if (context.isFirstOpenOfDay && context.currentHour < 12) {
     const idempotencyKey = `${context.firebaseUid}:app_opened:${context.localDate}`;
-    const alreadySentToday = context.lastNudge?.idempotencyKey === idempotencyKey;
+    const todayNudges = context.recentNudgesToday ?? (context.lastNudge ? [context.lastNudge] : []);
+    const alreadySentToday = todayNudges.some(
+      (n) => n.idempotencyKey === idempotencyKey || n.trigger === "app_opened"
+    );
 
     if (!alreadySentToday) {
       return {

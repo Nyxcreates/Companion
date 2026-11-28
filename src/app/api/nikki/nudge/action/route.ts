@@ -16,7 +16,7 @@ import { resolveUserTimezone } from "@/lib/time/currentTime";
 
 export const runtime = "nodejs";
 
-type ReminderActionType = "talk" | "snooze" | "acknowledge" | "dismiss";
+type ReminderActionType = "talk" | "snooze" | "acknowledge" | "done" | "dismiss";
 
 function getLocalDateStr(timezone: string): string {
   try {
@@ -100,9 +100,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
 
     const action = body.action as ReminderActionType | undefined;
-    if (!action || !["talk", "snooze", "acknowledge", "dismiss"].includes(action)) {
+    if (!action || !["talk", "snooze", "acknowledge", "done", "dismiss"].includes(action)) {
       return NextResponse.json(
-        { error: { message: "Valid action (talk, snooze, acknowledge, dismiss) is required.", code: "VALIDATION_ERROR" } },
+        { error: { message: "Valid action (talk, snooze, acknowledge, done, dismiss) is required.", code: "VALIDATION_ERROR" } },
         { status: 400 }
       );
     }
@@ -160,8 +160,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // ── 2. ACKNOWLEDGE / DISMISS ──────────────────────────────────────────────
-    if (action === "acknowledge" || action === "dismiss") {
+    // ── 2. ACKNOWLEDGE / DONE / DISMISS ───────────────────────────────────────
+    if (action === "acknowledge" || action === "done" || action === "dismiss") {
       if (category === "sleep") {
         await NotificationPreferenceModel.findOneAndUpdate(
           { firebaseUid: user.uid },
@@ -170,12 +170,16 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      const isCompleted = action === "acknowledge" || action === "done";
       if (nudgeDoc) {
-        nudgeDoc.status = action === "acknowledge" ? "replied" : "dismissed";
+        nudgeDoc.status = isCompleted ? "done" : "dismissed";
         nudgeDoc.snoozedUntil = null;
+        if (isCompleted) {
+          nudgeDoc.completedAt = new Date();
+        }
         await nudgeDoc.save();
 
-        if (action === "acknowledge" && nudgeDoc.trigger === "timetable_unstarted") {
+        if (isCompleted && nudgeDoc.trigger === "timetable_unstarted") {
           const uniqueKey = nudgeDoc.idempotencyKey.replace(/^.*:timetable_unstarted:/, "");
           await handleReminderAction({ uniqueKey, action: "start", firebaseUid: user.uid }).catch(() => {});
         }
@@ -186,6 +190,7 @@ export async function POST(request: NextRequest) {
         data: {
           action,
           category,
+          status: isCompleted ? "done" : "dismissed",
         },
       });
     }

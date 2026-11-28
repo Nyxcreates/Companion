@@ -76,6 +76,42 @@ function getTimezone(): string {
   }
 }
 
+const FLOATING_SHOWN_KEYS_STORAGE = "companion:shown-floating-nudge-keys";
+const FLOATING_SHOWN_TTL_MS = 48 * 60 * 60 * 1000;
+
+function readFloatingShownKeys(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(FLOATING_SHOWN_KEYS_STORAGE);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    const cutoff = Date.now() - FLOATING_SHOWN_TTL_MS;
+    const pruned: Record<string, number> = {};
+    for (const [k, ts] of Object.entries(parsed)) {
+      if (typeof ts === "number" && ts >= cutoff) pruned[k] = ts;
+    }
+    return pruned;
+  } catch {
+    return {};
+  }
+}
+
+function hasShownFloatingKey(key: string): boolean {
+  if (!key) return false;
+  return Boolean(readFloatingShownKeys()[key]);
+}
+
+function markFloatingKeyShown(key: string): void {
+  if (!key || typeof window === "undefined") return;
+  try {
+    const map = readFloatingShownKeys();
+    map[key] = Date.now();
+    localStorage.setItem(FLOATING_SHOWN_KEYS_STORAGE, JSON.stringify(map));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export default function FloatingNikkiPage() {
   const { firebaseUser, loading: authLoading } = useAuth();
 
@@ -131,12 +167,19 @@ export default function FloatingNikkiPage() {
   const pollPendingNudge = useCallback(async () => {
     if (!firebaseUser || !navigator.onLine) return;
     try {
-      const res = await authFetch("/api/nikki/nudge?evaluate=1");
+      const tz = encodeURIComponent(getTimezone());
+      const res = await authFetch(`/api/nikki/nudge?evaluate=1&timezone=${tz}`);
       if (!res.ok) return;
       const json = await res.json();
       const data = json?.data;
-      if (data?.id && data.id !== lastSeenNudgeIdRef.current) {
+      const dedupeKey = String(data?.idempotencyKey || data?.id || "");
+      if (
+        data?.id &&
+        data.id !== lastSeenNudgeIdRef.current &&
+        (!dedupeKey || !hasShownFloatingKey(dedupeKey))
+      ) {
         lastSeenNudgeIdRef.current = data.id;
+        if (dedupeKey) markFloatingKeyShown(dedupeKey);
         setActionError(null);
         setOverlayState((prev) => ({ ...prev, minimized: false }));
         window.companionDesktop?.setFloatingMinimized(false);
@@ -666,6 +709,24 @@ export default function FloatingNikkiPage() {
 
               {reminderKind === "checkin" && (
                 <>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={handleAcknowledge}
+                    className="inline-flex items-center gap-1 rounded-xl border border-emerald-400/30 bg-emerald-500/20 px-2.5 py-1.5 text-[11px] font-medium text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-50"
+                  >
+                    <Check className="h-3 w-3" />
+                    Done
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isActing}
+                    onClick={(e) => handleSnooze(e, 15)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-white/15 bg-white/10 px-2.5 py-1.5 text-[11px] font-medium text-white/90 transition hover:bg-white/20 disabled:opacity-50"
+                  >
+                    <Clock className="h-3 w-3" />
+                    Snooze 15 min
+                  </button>
                   <button
                     type="button"
                     disabled={isActing}

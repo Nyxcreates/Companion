@@ -200,6 +200,7 @@ export interface NikkiContextSnapshot {
 
   // Nudges & Interaction History
   lastNudge: NudgeContext | null;
+  recentNudgesToday?: NudgeContext[];
   recentNudgeOutcomes: NikkiNudgeStatus[];
   consecutiveIgnoredOrDismissedNudges: number;
   nudgesSentTodayCount: number;
@@ -240,7 +241,8 @@ export function isQuietHoursCheck(
 
 export async function buildNikkiContext(
   firebaseUid: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  clientTimezone?: string | null
 ): Promise<NikkiContextSnapshot> {
   await connectToDatabase();
 
@@ -249,7 +251,7 @@ export async function buildNikkiContext(
     NotificationPreferenceModel.findOne({ firebaseUid }),
   ]);
 
-  const timezone = resolveUserTimezone(null, user?.timezone);
+  const timezone = resolveUserTimezone(clientTimezone, user?.timezone);
   const userName = user?.displayName?.trim() || "friend";
   const companionName = user?.companionName?.trim() || "Nikki";
 
@@ -723,14 +725,23 @@ export async function buildNikkiContext(
       if (ageHours >= 3) {
         consecutiveIgnoredOrDismissedNudges++;
       }
-    } else if (n.status === "replied") {
+    } else if (n.status === "replied" || n.status === "done") {
       break;
     }
   }
 
-  const nudgesSentTodayCount = recentNudges.filter(
-    (n) => new Date(n.createdAt).getTime() >= startOfDayUtc.getTime()
-  ).length;
+  const recentNudgesToday: NudgeContext[] = recentNudges
+    .filter((n) => new Date(n.createdAt).getTime() >= startOfDayUtc.getTime())
+    .map((n) => ({
+      id: String(n._id),
+      trigger: n.trigger,
+      message: n.message,
+      status: n.status,
+      idempotencyKey: n.idempotencyKey,
+      createdAt: new Date(n.createdAt),
+    }));
+
+  const nudgesSentTodayCount = recentNudgesToday.length;
 
   // Moods
   const recentMoods: MoodContext[] = recentEmotions.map((e) => ({
@@ -878,6 +889,7 @@ export async function buildNikkiContext(
     recentJournalEntry,
 
     lastNudge,
+    recentNudgesToday,
     recentNudgeOutcomes,
     consecutiveIgnoredOrDismissedNudges,
     nudgesSentTodayCount,

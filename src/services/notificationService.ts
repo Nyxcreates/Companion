@@ -433,6 +433,15 @@ export async function evaluateProactiveContext(
     return { newNotificationsCount: 0, activeCheckIn: null };
   }
 
+  // Global minimum gap: at least 10 minutes between any two unprompted notifications
+  const recentAnyNotif = await NotificationModel.findOne({
+    firebaseUid,
+    createdAt: { $gte: new Date(now.getTime() - 10 * 60 * 1000) },
+  }).lean();
+  if (recentAnyNotif) {
+    return { newNotificationsCount: 0, activeCheckIn: null };
+  }
+
   // Check quiet hours
   const inQuietHours = isQuietHours(prefs.quietHoursStart, prefs.quietHoursEnd, userTimezone);
 
@@ -1067,7 +1076,7 @@ export async function evaluateProactiveContext(
   // 6. Water & Wellbeing Reminder
   if (isCatEnabled("wellbeing_water_food") && !inQuietHours) {
     const dismisses = prefs.learnedWeights?.waterDismissCount ?? 0;
-    const baseInterval = prefs.waterIntervalMinutes || 90;
+    const baseInterval = Math.max(60, prefs.waterIntervalMinutes || 60);
     // Adapt: if user frequently dismisses water reminders, increase interval up to 2.5x so we don't annoy them
     const factor = Math.min(2.5, 1 + (dismisses * 0.2));
     const effectiveWaterIntervalMs = baseInterval * factor * 60 * 1000;
@@ -1086,23 +1095,23 @@ export async function evaluateProactiveContext(
         title: "Hydration Check-in",
         body: "Have a glass of water to keep your focus sharp and your body refreshed.",
         actionUrl: "/dashboard",
-        actionLabel: "I Drank Water",
+        actionLabel: "Drank water",
         userTimezone,
       });
       newNotificationsCount++;
 
       if (!activeCheckIn && prefs.proactiveEnabled) {
         activeCheckIn = {
-          id: `water_${now.getTime()}`,
+          id: `water_${waterBucket}`,
           triggerType: "wellbeing_water",
           message: "Gentle reminder: when was the last time you took a sip of water?",
           subText: "Stay hydrated and kind to yourself today.",
           characterPose: "idle",
           characterGaze: "center",
           actions: [
-            { label: "Just drank some!", action: "accept", variant: "primary" },
-            { label: "Remind me later", action: "snooze", variant: "secondary" },
-            { label: "Not thirsty", action: "dismiss", variant: "ghost" },
+            { label: "Drank water", action: "accept", variant: "primary" },
+            { label: "Snooze 15 min", action: "snooze", variant: "secondary" },
+            { label: "Skip", action: "dismiss", variant: "ghost" },
           ],
           interventionType: "water",
         };

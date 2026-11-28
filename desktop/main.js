@@ -490,7 +490,52 @@ function registerIPC() {
     if (trayManager) trayManager.updateMenu();
   });
 
+function createNotificationIdempotencyStore() {
+  try {
+    const Store = require("electron-store");
+    return new Store({
+      name: "companion-notifications",
+      defaults: { shownKeys: {} },
+    });
+  } catch {
+    const data = { shownKeys: {} };
+    return {
+      get: (k, def) => (k in data ? data[k] : def),
+      set: (k, v) => {
+        data[k] = v;
+      },
+    };
+  }
+}
+
+const notificationStore = createNotificationIdempotencyStore();
+const NOTIFICATION_KEY_TTL_MS = 48 * 60 * 60 * 1000;
+
+function claimDesktopNotificationKey(key) {
+  if (!key) return true;
+  const now = Date.now();
+  const cutoff = now - NOTIFICATION_KEY_TTL_MS;
+  const raw = notificationStore.get("shownKeys", {}) || {};
+  const pruned = {};
+  for (const [k, ts] of Object.entries(raw)) {
+    if (typeof ts === "number" && ts >= cutoff) {
+      pruned[k] = ts;
+    }
+  }
+  if (pruned[key]) {
+    return false;
+  }
+  pruned[key] = now;
+  notificationStore.set("shownKeys", pruned);
+  return true;
+}
+
   ipcMain.on("companion:floating-nudge-forward", (_event, nudge) => {
+    const dedupeKey = nudge && (nudge.idempotencyKey || nudge.id);
+    if (dedupeKey && !claimDesktopNotificationKey(String(dedupeKey))) {
+      return;
+    }
+
     if (floatingManager) {
       floatingManager.showNudge(nudge);
     }
@@ -499,15 +544,33 @@ function registerIPC() {
     if (nudge && nudge.message && Notification.isSupported()) {
       try {
         const iconPath = path.join(__dirname, "icons", "icon-256.png");
+        const meta = nudge.metadata || {};
+        const hasActionTokens = Boolean(meta.doneToken || meta.snoozeToken);
         const toast = new Notification({
           title: "Nikki 💙",
           body: nudge.message,
           icon: iconPath,
           silent: false,
           timeoutType: "default",
+          actions: hasActionTokens
+            ? [
+                { type: "button", text: "Done" },
+                { type: "button", text: "Snooze 15 min" },
+              ]
+            : undefined,
         });
         toast.on("click", () => {
           showWindow();
+        });
+        toast.on("action", (_e, index) => {
+          const token = index === 0 ? meta.doneToken : meta.snoozeToken;
+          if (!token) return;
+          const base = COMPANION_URL.replace(/\/$/, "");
+          fetch(`${base}/api/nikki/nudge/action-token`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+          }).catch(() => {});
         });
         toast.show();
       } catch {
