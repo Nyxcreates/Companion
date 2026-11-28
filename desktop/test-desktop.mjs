@@ -268,33 +268,31 @@ test("TrayManager shows 'Show Nikki' when hidden", () => {
   assert(labels.includes("Show Nikki"), `Expected 'Show Nikki': ${labels.join(", ")}`);
 });
 
-test("TrayManager shows Pause when not paused, Resume when paused", () => {
+test("TrayManager toggles Pause Nikki checkbox when paused/resumed", () => {
   let isPaused = false;
+  let toggled = false;
   const tm = new TrayManager({
     onOpen: () => {},
     onShowHideNikki: () => {},
-    onPause: () => {},
-    onResume: () => {},
+    onTogglePause: () => {
+      toggled = true;
+      isPaused = !isPaused;
+    },
     onExit: () => {},
     getNikkiVisible: () => true,
     getNikkiPaused: () => isPaused,
   });
 
-  // Initially: Pause visible, Resume hidden
-  let items = tm.tray.menu.items.filter((i) => i.label);
-  let pauseItem = items.find((i) => i.label === "Pause Nikki");
-  let resumeItem = items.find((i) => i.label === "Resume Nikki");
-  assert(pauseItem && pauseItem.visible !== false, "Pause should be visible when not paused");
-  assert(resumeItem && resumeItem.visible === false, "Resume should be hidden when not paused");
+  // Initially: unchecked
+  let pauseItem = tm.tray.menu.items.find((i) => i.label === "Pause Nikki");
+  assert(pauseItem && pauseItem.type === "checkbox" && pauseItem.checked === false, "Pause Nikki should be unchecked initially");
 
-  // After pausing
-  isPaused = true;
+  // Click to toggle
+  pauseItem.click();
+  assert(toggled === true && isPaused === true, "Clicking Pause Nikki should invoke onTogglePause");
   tm.updateMenu();
-  items = tm.tray.menu.items.filter((i) => i.label);
-  pauseItem = items.find((i) => i.label === "Pause Nikki");
-  resumeItem = items.find((i) => i.label === "Resume Nikki");
-  assert(pauseItem && pauseItem.visible === false, "Pause should be hidden when paused");
-  assert(resumeItem && resumeItem.visible !== false, "Resume should be visible when paused");
+  pauseItem = tm.tray.menu.items.find((i) => i.label === "Pause Nikki");
+  assert(pauseItem && pauseItem.checked === true, "Pause Nikki should be checked when paused");
 });
 
 test("TrayManager.setAuthState updates auth and refreshes menu", () => {

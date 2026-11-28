@@ -83,8 +83,8 @@ const MIN_HEIGHT = 640;
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
-  // Another instance is already running — focus it and exit this one immediately.
-  app.exit(0);
+  // Another instance is already running — focus it and quit this one.
+  app.quit();
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -206,12 +206,12 @@ app.whenReady().then(async () => {
   floatingManager = new FloatingManager({
     baseUrl: COMPANION_URL,
     fullscreenDetector,
-    startVisible: true,
     onStateChange: () => {
       if (trayManager) trayManager.updateMenu();
     },
   });
   nikkiVisible = floatingManager.visible;
+  nikkiPaused = floatingManager.paused;
   floatingManager.create();
 
   // Set up system tray
@@ -219,6 +219,7 @@ app.whenReady().then(async () => {
     onOpen: () => showWindow(),
     onShowHideNikki: () => toggleNikki(),
     onBringNikkiToFront: () => bringNikkiToFront(),
+    onTogglePause: () => togglePauseNikki(),
     onPause: () => pauseNikki(),
     onResume: () => resumeNikki(),
     onToggleDnd: () => toggleDnd(),
@@ -240,19 +241,9 @@ app.whenReady().then(async () => {
   registerIPC();
 });
 
-// When the second instance tries to launch, restore/focus the existing instance.
-app.on("second-instance", (_event, argv) => {
-  bringNikkiToFront();
-  if (!argv.includes("--hidden") && !argv.includes("--startup")) {
-    showWindow();
-  }
-});
-
-// Keep background tray + floating Nikki alive even if all windows are closed/hidden.
-app.on("window-all-closed", (event) => {
-  if (!isQuitting) {
-    event.preventDefault();
-  }
+// When the second instance tries to launch, focus the existing window.
+app.on("second-instance", () => {
+  showWindow();
 });
 
 // macOS: re-create window when dock icon clicked (not typical for Windows).
@@ -287,10 +278,15 @@ process.on("SIGINT", () => exitApp());
 // ── Window helpers ───────────────────────────────────────────────────────────
 
 function showWindow() {
+  console.log("[Main] showWindow()");
   if (!mainWindow || mainWindow.isDestroyed()) {
     createMainWindow();
     if (sessionWatcher) {
       sessionWatcher.setWindow(mainWindow);
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
     }
     return;
   }
@@ -300,6 +296,7 @@ function showWindow() {
 }
 
 function exitApp() {
+  console.log("[Main] exitApp()");
   isQuitting = true;
   if (floatingManager) {
     floatingManager.destroy();
@@ -316,6 +313,7 @@ function exitApp() {
 
 function toggleNikki() {
   nikkiVisible = !nikkiVisible;
+  console.log("[Main] toggleNikki() ->", nikkiVisible);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("companion:nikki-visibility", nikkiVisible);
   }
@@ -326,6 +324,7 @@ function toggleNikki() {
 }
 
 function bringNikkiToFront() {
+  console.log("[Main] bringNikkiToFront()");
   nikkiVisible = true;
   nikkiPaused = false;
   if (floatingManager) {
@@ -338,37 +337,57 @@ function bringNikkiToFront() {
   if (trayManager) trayManager.updateMenu();
 }
 
+function togglePauseNikki() {
+  if (nikkiPaused) {
+    resumeNikki();
+  } else {
+    pauseNikki();
+  }
+}
+
 function pauseNikki() {
   nikkiPaused = true;
+  console.log("[Main] pauseNikki() -> true");
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("companion:nikki-pause", true);
   }
   if (floatingManager) {
     floatingManager.setPaused(true);
+    if (floatingManager.window && !floatingManager.window.isDestroyed()) {
+      floatingManager.window.webContents.send("companion:nikki-pause", true);
+    }
   }
   if (trayManager) trayManager.updateMenu();
 }
 
 function resumeNikki() {
   nikkiPaused = false;
+  console.log("[Main] resumeNikki() -> false");
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("companion:nikki-pause", false);
   }
   if (floatingManager) {
     floatingManager.setPaused(false);
+    if (floatingManager.window && !floatingManager.window.isDestroyed()) {
+      floatingManager.window.webContents.send("companion:nikki-pause", false);
+    }
   }
   if (trayManager) trayManager.updateMenu();
 }
 
 function toggleDnd() {
   if (!floatingManager) return;
-  floatingManager.setDnd(!floatingManager.dnd);
+  const next = !floatingManager.dnd;
+  console.log("[Main] toggleDnd() ->", next);
+  floatingManager.setDnd(next);
   if (trayManager) trayManager.updateMenu();
 }
 
 function toggleAllowFullscreen() {
   if (!floatingManager) return;
-  floatingManager.setAllowOverFullscreen(!floatingManager.allowOverFullscreen);
+  const next = !floatingManager.allowOverFullscreen;
+  console.log("[Main] toggleAllowFullscreen() ->", next);
+  floatingManager.setAllowOverFullscreen(next);
   if (trayManager) trayManager.updateMenu();
 }
 
@@ -381,6 +400,7 @@ function getAutoLaunchEnabled() {
 }
 
 function setAutoLaunchEnabled(enabled) {
+  console.log("[Main] setAutoLaunchEnabled() ->", Boolean(enabled));
   try {
     app.setLoginItemSettings({
       openAtLogin: Boolean(enabled),
@@ -393,6 +413,7 @@ function setAutoLaunchEnabled(enabled) {
 }
 
 function toggleAutoLaunch() {
+  console.log("[Main] toggleAutoLaunch()");
   setAutoLaunchEnabled(!getAutoLaunchEnabled());
 }
 

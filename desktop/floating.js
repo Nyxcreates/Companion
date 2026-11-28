@@ -95,6 +95,7 @@ function createSettingsStore() {
         displayId: null,
         visible: true,
         minimized: false,
+        paused: false,
         dnd: false,
         allowOverFullscreen: false,
       },
@@ -107,6 +108,7 @@ function createSettingsStore() {
       displayId: null,
       visible: true,
       minimized: false,
+      paused: false,
       dnd: false,
       allowOverFullscreen: false,
     };
@@ -162,7 +164,7 @@ class FloatingManager {
       typeof options.startVisible === "boolean"
         ? options.startVisible
         : Boolean(this.store.get("visible", true));
-    this.paused = false;
+    this.paused = Boolean(this.store.get("paused", false));
     this.dnd = Boolean(this.store.get("dnd", false));
     this.minimized = Boolean(this.store.get("minimized", false));
     this.allowOverFullscreen = Boolean(this.store.get("allowOverFullscreen", false));
@@ -480,6 +482,9 @@ class FloatingManager {
   setVisible(visible) {
     this.visible = Boolean(visible);
     this.store.set("visible", this.visible);
+    if (this.visible && (!this.window || this.window.isDestroyed())) {
+      this.create();
+    }
     this._syncVisibility();
     this._pushStateToRenderer();
     this.onStateChange(this.getState());
@@ -487,6 +492,7 @@ class FloatingManager {
 
   setPaused(paused) {
     this.paused = Boolean(paused);
+    this.store.set("paused", this.paused);
     this._syncVisibility();
     this._pushStateToRenderer();
     this.onStateChange(this.getState());
@@ -503,7 +509,11 @@ class FloatingManager {
   setAllowOverFullscreen(allow) {
     this.allowOverFullscreen = Boolean(allow);
     this.store.set("allowOverFullscreen", this.allowOverFullscreen);
+    if (this.shouldShow() && (!this.window || this.window.isDestroyed())) {
+      this.create();
+    }
     if (this.window && !this.window.isDestroyed()) {
+      this.window.setAlwaysOnTop(true, "screen-saver", 1);
       this.window.setVisibleOnAllWorkspaces(true, {
         visibleOnFullScreen: this.allowOverFullscreen,
       });
@@ -568,6 +578,7 @@ class FloatingManager {
     this.paused = false;
     this.dnd = false;
     this.store.set("visible", true);
+    this.store.set("paused", false);
     this.store.set("dnd", false);
     if (!this.window || this.window.isDestroyed()) {
       this.create();

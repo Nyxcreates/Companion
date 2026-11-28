@@ -42,6 +42,7 @@ class TrayManager {
     this.authenticated = false;
     this.online = true;
     this.tray = null;
+    this.contextMenu = null;
 
     this._createTray();
   }
@@ -90,52 +91,75 @@ class TrayManager {
     const menuTemplate = [
       {
         label: "Open Companion",
-        click: () => this.callbacks.onOpen(),
+        click: () => {
+          console.log("[Tray] Clicked: Open Companion");
+          this.callbacks.onOpen();
+        },
       },
       { type: "separator" },
       {
         label: nikkiVisible ? "Hide Nikki" : "Show Nikki",
-        click: () => this.callbacks.onShowHideNikki(),
+        click: () => {
+          console.log(`[Tray] Clicked: ${nikkiVisible ? "Hide Nikki" : "Show Nikki"}`);
+          this.callbacks.onShowHideNikki();
+        },
       },
       {
         label: "Bring Nikki to Front",
-        click: () =>
-          this.callbacks.onBringNikkiToFront &&
-          this.callbacks.onBringNikkiToFront(),
+        click: () => {
+          console.log("[Tray] Clicked: Bring Nikki to Front");
+          if (this.callbacks.onBringNikkiToFront) {
+            this.callbacks.onBringNikkiToFront();
+          }
+        },
       },
       {
         label: "Pause Nikki",
-        click: () => this.callbacks.onPause(),
-        enabled: !nikkiPaused,
-        visible: !nikkiPaused,
-      },
-      {
-        label: "Resume Nikki",
-        click: () => this.callbacks.onResume(),
-        enabled: nikkiPaused,
-        visible: nikkiPaused,
+        type: "checkbox",
+        checked: nikkiPaused,
+        click: () => {
+          console.log("[Tray] Clicked: Pause Nikki");
+          if (this.callbacks.onTogglePause) {
+            this.callbacks.onTogglePause();
+          } else if (nikkiPaused && this.callbacks.onResume) {
+            this.callbacks.onResume();
+          } else if (!nikkiPaused && this.callbacks.onPause) {
+            this.callbacks.onPause();
+          }
+        },
       },
       {
         label: "Do Not Disturb",
         type: "checkbox",
         checked: nikkiDnd,
-        click: () => this.callbacks.onToggleDnd && this.callbacks.onToggleDnd(),
+        click: () => {
+          console.log("[Tray] Clicked: Do Not Disturb");
+          if (this.callbacks.onToggleDnd) {
+            this.callbacks.onToggleDnd();
+          }
+        },
       },
       {
         label: "Allow Over Full-Screen",
         type: "checkbox",
         checked: allowFullscreen,
-        click: () =>
-          this.callbacks.onToggleAllowFullscreen &&
-          this.callbacks.onToggleAllowFullscreen(),
+        click: () => {
+          console.log("[Tray] Clicked: Allow Over Full-Screen");
+          if (this.callbacks.onToggleAllowFullscreen) {
+            this.callbacks.onToggleAllowFullscreen();
+          }
+        },
       },
       {
         label: "Launch at login",
         type: "checkbox",
         checked: autoLaunch,
-        click: () =>
-          this.callbacks.onToggleAutoLaunch &&
-          this.callbacks.onToggleAutoLaunch(),
+        click: () => {
+          console.log("[Tray] Clicked: Launch at login");
+          if (this.callbacks.onToggleAutoLaunch) {
+            this.callbacks.onToggleAutoLaunch();
+          }
+        },
       },
       { type: "separator" },
       {
@@ -145,12 +169,15 @@ class TrayManager {
       { type: "separator" },
       {
         label: "Exit Companion",
-        click: () => this.callbacks.onExit(),
+        click: () => {
+          console.log("[Tray] Clicked: Exit Companion");
+          this.callbacks.onExit();
+        },
       },
     ];
 
-    const contextMenu = Menu.buildFromTemplate(menuTemplate);
-    this.tray.setContextMenu(contextMenu);
+    this.contextMenu = Menu.buildFromTemplate(menuTemplate);
+    this.tray.setContextMenu(this.contextMenu);
   }
 
   /**
