@@ -9,11 +9,18 @@
  *
  * Does NOT contain any chat input, message composer, or conversation history.
  * Clicking "Talk to Nikki" creates a NEW conversation in the main Companion app.
+ *
+ * Electron requirements met:
+ *  - No window.open / popup requirement (uses companionDesktop.openMainConversation IPC).
+ *  - localStorage usage is guarded for Electron's sandboxed context.
+ *  - CSS background is set transparent intentionally via inline style (not CSS class).
+ *  - Falls back to an opaque "Nikki is loading…" card until auth resolves.
+ *  - Shows a "Sign in" prompt if the user is not authenticated.
  */
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Minimize2, Maximize2, X, Move, Clock, Check, WifiOff } from "lucide-react";
+import { MessageCircle, Minimize2, Maximize2, X, Move, Clock, Check, WifiOff, LogIn } from "lucide-react";
 import { CompanionCharacter, type CompanionPose } from "@/components/character/CompanionCharacter";
 import { useAuth } from "@/context/AuthContext";
 import { authFetch } from "@/lib/api/authFetch";
@@ -79,6 +86,7 @@ function getTimezone(): string {
 const FLOATING_SHOWN_KEYS_STORAGE = "companion:shown-floating-nudge-keys";
 const FLOATING_SHOWN_TTL_MS = 48 * 60 * 60 * 1000;
 
+/** localStorage helpers — guarded so they never throw in Electron's sandboxed renderer */
 function readFloatingShownKeys(): Record<string, number> {
   if (typeof window === "undefined") return {};
   try {
@@ -92,6 +100,7 @@ function readFloatingShownKeys(): Record<string, number> {
     }
     return pruned;
   } catch {
+    // localStorage may throw in some sandboxed Electron contexts; degrade gracefully
     return {};
   }
 }
@@ -137,8 +146,11 @@ export default function FloatingNikkiPage() {
   const snoozeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSeenNudgeIdRef = useRef<string | null>(null);
 
-  // Transparent background for Electron overlay
+  // ── Task 2 & 5: Set body/html to transparent AFTER first paint so the
+  //   window never flashes an empty transparent frame. We wait for the
+  //   auth state to resolve first so there is always visible content.
   useEffect(() => {
+    if (authLoading) return; // Don't go transparent until we know auth state
     const html = document.documentElement;
     const body = document.body;
     const prevHtmlBg = html.style.background;
@@ -150,7 +162,7 @@ export default function FloatingNikkiPage() {
       html.style.background = prevHtmlBg;
       body.style.background = prevBodyBg;
     };
-  }, []);
+  }, [authLoading]);
 
   // Report auth state directly from floating window so it works even if main window is closed
   useEffect(() => {
@@ -548,8 +560,56 @@ export default function FloatingNikkiPage() {
     ? "wave"
     : "idle";
 
+  // ── Task 2: Always render a visible, non-transparent fallback card while loading.
+  //   This prevents the window from being an empty transparent frame, which makes
+  //   it impossible to see even when positioned correctly.
+  if (authLoading) {
+    return (
+      <div className="flex h-screen w-screen flex-col items-end justify-end p-3 select-none"
+           style={{ background: "transparent" }}>
+        <div className="flex items-center gap-2.5 rounded-2xl border border-violet-400/40 bg-[#14132a]/95 px-4 py-3 text-sm text-white shadow-2xl backdrop-blur-md">
+          <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-violet-400" />
+          <span className="text-white/80">Nikki is loading…</span>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Task 3: If the user is not signed in, show a minimal prompt instead of
+  //   an empty transparent window. No iframes or credential URLs — uses IPC.
+  if (!firebaseUser) {
+    return (
+      <div className="flex h-screen w-screen flex-col items-end justify-end p-3 select-none"
+           style={{ background: "transparent" }}>
+        <div
+          onMouseEnter={handleMouseEnterInteractive}
+          onMouseLeave={handleMouseLeaveInteractive}
+          className="flex flex-col items-end gap-2.5 rounded-2xl border border-violet-400/40 bg-[#14132a]/95 px-4 py-3 text-sm text-white shadow-2xl backdrop-blur-md"
+        >
+          <div className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-full bg-violet-400" />
+            <span className="text-white/90 text-[13px]">Open Companion to sign in</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (window.companionDesktop?.openMainConversation) {
+                window.companionDesktop.openMainConversation(undefined);
+              }
+            }}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-violet-500 px-3 py-1.5 text-[12px] font-medium text-white transition hover:bg-violet-400"
+          >
+            <LogIn className="h-3.5 w-3.5" />
+            Sign in to Companion
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-screen w-screen flex-col items-end justify-end bg-transparent p-3 select-none">
+    <div className="flex h-screen w-screen flex-col items-end justify-end p-3 select-none"
+         style={{ background: "transparent" }}>
       {/* Compact Contextual Reminder / Check-in Card (NO chat input or history) */}
       <AnimatePresence>
         {nudge && !overlayState.minimized && (

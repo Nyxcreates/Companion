@@ -139,6 +139,9 @@ function createMainWindow() {
     backgroundColor: "#0b0b1e",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
+      // ── Task 3: Share Firebase session with the floating window so the user
+      //   only needs to sign in once. Both windows use persist:companion.
+      partition: "persist:companion",
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,

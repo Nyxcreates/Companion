@@ -16,12 +16,13 @@
 const { BrowserWindow, screen } = require("electron");
 const path = require("path");
 
-const DEFAULT_WIDTH = 330;
-const DEFAULT_HEIGHT = 310;
-const EDGE_PADDING = 18;
+const DEFAULT_WIDTH = 360;
+const DEFAULT_HEIGHT = 520;
+const EDGE_PADDING = 24;
 const SNAP_THRESHOLD = 16;
 const Z_ORDER_WATCHDOG_MS = 1500;
 const SHOW_FALLBACK_TIMEOUT_MS = 2500;
+const IS_NIKKI_DEBUG = process.env.NIKKI_DEBUG === "1";
 
 function buildRetryFallbackHtml(targetUrl) {
   const safeUrl = JSON.stringify(targetUrl);
@@ -72,7 +73,7 @@ function buildRetryFallbackHtml(targetUrl) {
 <body>
   <div class="card">
     <span class="dot"></span>
-    <span>Nikki offline</span>
+    <span>Nikki is loading…</span>
     <button class="btn" id="retry-btn" type="button">Retry</button>
   </div>
   <script>
@@ -191,27 +192,40 @@ class FloatingManager {
 
     const pos = this._resolveInitialPosition();
 
+    // ── Task 4: Ensure minimum size and correct initial position ────────
+    const primary = screen.getPrimaryDisplay();
+    const wa = primary.workArea;
+    const initPos = {
+      x: Math.max(pos.x, wa.x),
+      y: Math.max(pos.y, wa.y),
+    };
+
     this.window = new BrowserWindow({
       width: DEFAULT_WIDTH,
       height: DEFAULT_HEIGHT,
-      x: pos.x,
-      y: pos.y,
+      minWidth: DEFAULT_WIDTH,
+      minHeight: DEFAULT_HEIGHT,
+      x: initPos.x,
+      y: initPos.y,
       title: "Floating Nikki",
-      type: process.platform === "win32" ? "toolbar" : undefined,
-      transparent: true,
-      frame: false,
+      type: process.platform === "win32" && !IS_NIKKI_DEBUG ? "toolbar" : undefined,
+      transparent: !IS_NIKKI_DEBUG,
+      frame: IS_NIKKI_DEBUG,
       alwaysOnTop: true,
-      skipTaskbar: true,
-      resizable: false,
+      skipTaskbar: !IS_NIKKI_DEBUG,
+      resizable: IS_NIKKI_DEBUG,
       movable: true,
       minimizable: false,
       maximizable: false,
-      hasShadow: false,
-      focusable: false,
+      hasShadow: IS_NIKKI_DEBUG,
+      focusable: IS_NIKKI_DEBUG ? true : false,
       show: false,
-      backgroundColor: "#00000000",
+      // ── Task 4: In debug mode use opaque background so the window is always visible
+      backgroundColor: IS_NIKKI_DEBUG ? "#14132a" : "#00000000",
       webPreferences: {
         preload: path.join(__dirname, "preload.js"),
+        // ── Task 3: Persist Firebase session across window reloads
+        partition: "persist:companion",
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -219,14 +233,28 @@ class FloatingManager {
       },
     });
 
+    // ── Task 4: In debug mode add a coloured border so the window is impossible to miss
+    if (IS_NIKKI_DEBUG) {
+      this.window.webContents.on("dom-ready", () => {
+        if (!this.window || this.window.isDestroyed()) return;
+        this.window.webContents.insertCSS(
+          `html, body { outline: 3px solid #a78bfa !important; box-sizing: border-box !important; }`
+        ).catch(() => {});
+      });
+    }
+
+    if (IS_NIKKI_DEBUG) {
+      this.window.webContents.openDevTools({ mode: "detach" });
+    }
+
     // Keep above ordinary desktop windows (VS Code, Chrome, Word, etc.) and Windows desktop
     this._assertTopmost();
     this.window.setVisibleOnAllWorkspaces(true, {
       visibleOnFullScreen: this.allowOverFullscreen,
     });
 
-    // Default to click-through so transparent pixels never obstruct user work.
-    this.window.setIgnoreMouseEvents(true, { forward: true });
+    // Default to click-through so transparent pixels never obstruct user work (disabled in NIKKI_DEBUG).
+    this.window.setIgnoreMouseEvents(!IS_NIKKI_DEBUG, { forward: true });
 
     const floatingUrl = `${this.baseUrl.replace(/\/$/, "")}/desktop/floating`;
     this._usingFallbackPage = false;
@@ -260,9 +288,10 @@ class FloatingManager {
       this._syncVisibility();
     };
 
-    this.window.webContents.on("did-fail-load", (_event, errorCode) => {
+    this.window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
       // -3 (ERR_ABORTED) occurs on normal redirects/reloads
       if (errorCode === -3) return;
+      console.warn(`[Floating] did-fail-load (${errorCode}): ${errorDescription} url=${validatedURL}`);
       showFallbackOverlay();
       scheduleReload();
     });
@@ -272,14 +301,64 @@ class FloatingManager {
         typeof this.window?.webContents?.getURL === "function"
           ? this.window.webContents.getURL()
           : "";
+
+      // ── Task 1: Diagnostic logging after every did-finish-load ──────────
+      if (IS_NIKKI_DEBUG) {
+        console.log(`[Floating] did-finish-load url=${currentUrl}`);
+
+        // Log what actually rendered (title, href, body text, bg colour)
+        const diagScript = `(function() {
+          return {
+            title: document.title,
+            href: location.href,
+            bodyText: (document.body && document.body.innerText
+              ? document.body.innerText.slice(0, 300)
+              : '').replace(/\\n/g, ' ').trim(),
+            bodyBg: document.body
+              ? getComputedStyle(document.body).backgroundColor
+              : 'n/a',
+          };
+        })()`;
+
+        this.window.webContents.executeJavaScript(diagScript)
+          .then((info) => {
+            console.log("[Floating] page-diag title    :", info.title);
+            console.log("[Floating] page-diag href     :", info.href);
+            console.log("[Floating] page-diag bodyText :", info.bodyText || "(empty)");
+            console.log("[Floating] page-diag bodyBg   :", info.bodyBg);
+
+            // Detect redirect to /login or similar auth gate
+            if (typeof info.href === "string" && !info.href.includes("/desktop/floating")) {
+              console.warn("[Floating] REDIRECT DETECTED — final URL is not /desktop/floating:", info.href);
+            }
+          })
+          .catch(() => {});
+
+        // Log window bounds, visibility, and primary display work area
+        const bounds = typeof this.window.getBounds === "function" ? this.window.getBounds() : null;
+        const isVis = typeof this.window.isVisible === "function" ? this.window.isVisible() : "?";
+        console.log("[Floating] window bounds  :", JSON.stringify(bounds));
+        console.log("[Floating] window isVisible:", isVis);
+
+        try {
+          const { screen } = require("electron");
+          const primary = screen.getPrimaryDisplay();
+          console.log("[Floating] primary workArea:", JSON.stringify(primary.workArea));
+        } catch {}
+      }
+
       if (currentUrl && !currentUrl.startsWith("data:")) {
         this._usingFallbackPage = false;
-        this.window.setIgnoreMouseEvents(true, { forward: true });
+        this.window.setIgnoreMouseEvents(!IS_NIKKI_DEBUG, { forward: true });
+
+        // ── Task 4: Re-clamp to screen on every real page load ──────────
+        this.ensureOnScreenBounds();
       }
       this._syncVisibility();
     });
 
-    this.window.webContents.on("render-process-gone", () => {
+    this.window.webContents.on("render-process-gone", (_event, details) => {
+      console.warn("[Floating] render-process-gone:", details?.reason);
       if (this.isQuitting) return;
       if (this.window && !this.window.isDestroyed()) {
         this.window.destroy();
@@ -290,7 +369,16 @@ class FloatingManager {
       }, 1000);
     });
 
+    if (IS_NIKKI_DEBUG) {
+      this.window.webContents.on("console-message", (_event, level, message) => {
+        console.log(`[Floating renderer:${level}] ${message}`);
+      });
+    }
+
     this.window.once("ready-to-show", () => {
+      if (IS_NIKKI_DEBUG) {
+        console.log("[Floating] ready-to-show fired");
+      }
       if (this._showFallbackTimer) {
         clearTimeout(this._showFallbackTimer);
         this._showFallbackTimer = null;
@@ -482,10 +570,18 @@ class FloatingManager {
   setVisible(visible) {
     this.visible = Boolean(visible);
     this.store.set("visible", this.visible);
-    if (this.visible && (!this.window || this.window.isDestroyed())) {
-      this.create();
+    if (this.visible) {
+      // Explicitly showing Nikki overrides pause/DND so "Show Nikki" always makes her visible
+      this.paused = false;
+      this.dnd = false;
+      this.store.set("paused", false);
+      this.store.set("dnd", false);
+      if (!this.window || this.window.isDestroyed()) {
+        this.create();
+      }
+      this.ensureOnScreenBounds();
     }
-    this._syncVisibility();
+    this._syncVisibility({ forceShow: this.visible });
     this._pushStateToRenderer();
     this.onStateChange(this.getState());
   }
@@ -573,6 +669,39 @@ class FloatingManager {
     }, Z_ORDER_WATCHDOG_MS);
   }
 
+  ensureOnScreenBounds() {
+    if (!this.window || this.window.isDestroyed()) return;
+    const bounds = typeof this.window.getBounds === "function" ? this.window.getBounds() : null;
+    if (!bounds) return;
+
+    const displays = screen.getAllDisplays();
+    const hasZeroSize = bounds.width < DEFAULT_WIDTH || bounds.height < DEFAULT_HEIGHT;
+    const intersectsAny = displays.some((d) => {
+      const wa = d.workArea;
+      return (
+        bounds.x < wa.x + wa.width &&
+        bounds.x + bounds.width > wa.x &&
+        bounds.y < wa.y + wa.height &&
+        bounds.y + bounds.height > wa.y
+      );
+    });
+
+    if (hasZeroSize || !intersectsAny) {
+      const primary = screen.getPrimaryDisplay();
+      const wa = primary.workArea;
+      const width = Math.max(DEFAULT_WIDTH, bounds.width || DEFAULT_WIDTH);
+      const height = Math.max(DEFAULT_HEIGHT, bounds.height || DEFAULT_HEIGHT);
+      const x = Math.round(wa.x + wa.width - width - EDGE_PADDING);
+      const y = Math.round(wa.y + wa.height - height - EDGE_PADDING);
+      if (typeof this.window.setBounds === "function") {
+        this.window.setBounds({ x, y, width, height });
+      } else {
+        this.window.setPosition(x, y);
+      }
+      this._savePosition(x, y, primary.id);
+    }
+  }
+
   bringToFront() {
     this.visible = true;
     this.paused = false;
@@ -583,23 +712,32 @@ class FloatingManager {
     if (!this.window || this.window.isDestroyed()) {
       this.create();
     }
-    this._syncVisibility();
+    this.ensureOnScreenBounds();
+    this._syncVisibility({ forceShow: true, focus: true });
     this._assertTopmost();
     this._pushStateToRenderer();
     this.onStateChange(this.getState());
   }
 
-  _syncVisibility() {
+  _syncVisibility(opts = {}) {
     if (!this.window || this.window.isDestroyed()) return;
     if (this.shouldShow()) {
       this._intentionalHide = false;
       if (typeof this.window.isMinimized === "function" && this.window.isMinimized()) {
         this.window.restore();
       }
-      this._assertTopmost();
-      if (!this.window.isVisible()) {
+      if (typeof this.window.setOpacity === "function") {
+        this.window.setOpacity(1);
+      }
+      if (opts.forceShow && typeof this.window.show === "function") {
+        this.window.show();
+      } else if (!this.window.isVisible()) {
         // showInactive() displays Nikki over other apps without stealing focus
         this.window.showInactive();
+      }
+      this._assertTopmost();
+      if (opts.focus && typeof this.window.focus === "function") {
+        this.window.focus();
       }
     } else if (this.window.isVisible()) {
       this._intentionalHide = true;
