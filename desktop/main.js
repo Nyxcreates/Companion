@@ -36,7 +36,7 @@ if (typeof electron === "string" || !electron.app) {
   return;
 }
 
-const { app, BrowserWindow, ipcMain, nativeImage, Notification } = electron;
+const { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, session } = electron;
 const { TrayManager } = require("./tray");
 const { SessionWatcher } = require("./session");
 const { FloatingManager } = require("./floating");
@@ -137,6 +137,7 @@ function createMainWindow() {
     icon,
     show: false, // Show after content loads to avoid flash
     backgroundColor: "#0b0b1e",
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       // ── Task 3: Share Firebase session with the floating window so the user
@@ -148,6 +149,10 @@ function createMainWindow() {
       backgroundThrottling: false,
     },
   });
+
+  if (typeof mainWindow.removeMenu === "function") {
+    mainWindow.removeMenu();
+  }
 
   mainWindow.loadURL(COMPANION_URL);
 
@@ -201,6 +206,15 @@ function createMainWindow() {
 // ── App lifecycle ────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+  // Remove default File/Edit/View/Window/Help menu bar from all windows
+  if (typeof Menu?.setApplicationMenu === "function") {
+    Menu.setApplicationMenu(null);
+  }
+  // Initialize shared persistent session for Firebase Auth IndexedDB
+  if (typeof session?.fromPartition === "function") {
+    session.fromPartition("persist:companion");
+  }
+
   COMPANION_URL = await resolveCompanionUrl();
   createMainWindow();
 
@@ -424,12 +438,22 @@ function toggleAutoLaunch() {
 
 function registerIPC() {
   // The renderer reports auth state changes (login / logout / session expired).
-  ipcMain.on("companion:auth-state", (_event, state) => {
+  ipcMain.on("companion:auth-state", (event, state) => {
+    const isAuthenticated = Boolean(state?.authenticated);
+    const fromMain =
+      Boolean(mainWindow) &&
+      !mainWindow.isDestroyed() &&
+      event?.sender === mainWindow.webContents;
+
     if (trayManager) {
       trayManager.setAuthState(state); // { authenticated: boolean }
     }
     if (floatingManager) {
-      floatingManager.setAuthenticated(Boolean(state?.authenticated));
+      if (fromMain) {
+        floatingManager.onMainAuthChanged(isAuthenticated);
+      } else {
+        floatingManager.setAuthenticated(isAuthenticated);
+      }
     }
   });
 
@@ -584,6 +608,9 @@ function claimDesktopNotificationKey(key) {
 
   ipcMain.on("companion:open-conversation", (_event, payload) => {
     showWindow();
+    if (payload?.focusOnly) {
+      return;
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       const conversationId = payload?.conversationId;
       const currentUrl = mainWindow.webContents.getURL() || "";

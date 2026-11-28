@@ -40,8 +40,12 @@ public static class WinUserState {
  *  5 = QUNS_ACCEPTS_NOTIFICATIONS
  *  6 = QUNS_QUIET_TIME
  *  7 = QUNS_APP
+ *
+ * Only suppress for true exclusive fullscreen / presentation modes (3 and 4).
+ * QUNS_BUSY (2) and QUNS_QUIET_TIME (6) are frequently returned during normal
+ * Windows desktop/IDE usage and Focus Assist hours, which would hide Nikki.
  */
-const SUPPRESSED_STATES = new Set([2, 3, 4, 6]);
+const SUPPRESSED_STATES = new Set([3, 4]);
 
 class FullscreenDetector {
   /**

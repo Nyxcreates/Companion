@@ -13,7 +13,7 @@
  *  - Full-screen / presentation / game suppression & Do-Not-Disturb mode
  */
 
-const { BrowserWindow, screen } = require("electron");
+const { BrowserWindow, screen, session } = require("electron");
 const path = require("path");
 
 const DEFAULT_WIDTH = 360;
@@ -171,6 +171,8 @@ class FloatingManager {
     this.allowOverFullscreen = Boolean(this.store.get("allowOverFullscreen", false));
     this.suppressedByFullscreen = false;
     this.authenticated = false;
+    this._mainAuthenticated = false;
+    this._lastAuthReloadAt = 0;
     this.isQuitting = false;
 
     this._fullscreenTimer = null;
@@ -200,6 +202,11 @@ class FloatingManager {
       y: Math.max(pos.y, wa.y),
     };
 
+    const companionSession =
+      typeof session?.fromPartition === "function"
+        ? session.fromPartition("persist:companion")
+        : undefined;
+
     this.window = new BrowserWindow({
       width: DEFAULT_WIDTH,
       height: DEFAULT_HEIGHT,
@@ -211,6 +218,7 @@ class FloatingManager {
       type: process.platform === "win32" && !IS_NIKKI_DEBUG ? "toolbar" : undefined,
       transparent: !IS_NIKKI_DEBUG,
       frame: IS_NIKKI_DEBUG,
+      autoHideMenuBar: true,
       alwaysOnTop: true,
       skipTaskbar: !IS_NIKKI_DEBUG,
       resizable: IS_NIKKI_DEBUG,
@@ -220,18 +228,23 @@ class FloatingManager {
       hasShadow: IS_NIKKI_DEBUG,
       focusable: IS_NIKKI_DEBUG ? true : false,
       show: false,
-      // ── Task 4: In debug mode use opaque background so the window is always visible
+      // ── Task 4: In debug mode use opaque background; normal mode is transparent
       backgroundColor: IS_NIKKI_DEBUG ? "#14132a" : "#00000000",
       webPreferences: {
         preload: path.join(__dirname, "preload.js"),
         // ── Task 3: Persist Firebase session across window reloads
         partition: "persist:companion",
+        ...(companionSession ? { session: companionSession } : {}),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
         backgroundThrottling: false,
       },
     });
+
+    if (typeof this.window.removeMenu === "function") {
+      this.window.removeMenu();
+    }
 
     // ── Task 4: In debug mode add a coloured border so the window is impossible to miss
     if (IS_NIKKI_DEBUG) {
@@ -564,6 +577,10 @@ class FloatingManager {
    */
   setIgnoreMouse(ignore) {
     if (!this.window || this.window.isDestroyed()) return;
+    if (IS_NIKKI_DEBUG) {
+      this.window.setIgnoreMouseEvents(false);
+      return;
+    }
     this.window.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
   }
 
@@ -630,6 +647,47 @@ class FloatingManager {
     this.authenticated = Boolean(authenticated);
     this._syncVisibility();
     this._pushStateToRenderer();
+  }
+
+  /**
+   * Called when the main Companion window reports an auth state change.
+   * If the main window just signed in while the floating window isn't
+   * authenticated yet, reload the floating page once so it picks up the
+   * shared IndexedDB Firebase Auth session from `persist:companion`.
+   */
+  onMainAuthChanged(authenticated) {
+    const nextMainAuth = Boolean(authenticated);
+    const prevMainAuth = this._mainAuthenticated;
+    this._mainAuthenticated = nextMainAuth;
+
+    if (nextMainAuth && !this.authenticated) {
+      const now = Date.now();
+      if (
+        this.window &&
+        !this.window.isDestroyed() &&
+        !this._usingFallbackPage &&
+        typeof this.window.webContents?.reload === "function" &&
+        now - this._lastAuthReloadAt > 5000
+      ) {
+        this._lastAuthReloadAt = now;
+        this.window.webContents.reload();
+        return;
+      }
+    }
+
+    if (!nextMainAuth && prevMainAuth && this.authenticated) {
+      if (
+        this.window &&
+        !this.window.isDestroyed() &&
+        !this._usingFallbackPage &&
+        typeof this.window.webContents?.reload === "function"
+      ) {
+        this.window.webContents.reload();
+        return;
+      }
+    }
+
+    this.setAuthenticated(nextMainAuth);
   }
 
   /**

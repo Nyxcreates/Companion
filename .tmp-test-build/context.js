@@ -1,0 +1,600 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.isQuietHoursCheck = isQuietHoursCheck;
+exports.buildNikkiContext = buildNikkiContext;
+const mongodb_1 = require("@/lib/mongodb");
+const User_1 = require("@/models/User");
+const NotificationPreference_1 = require("@/models/NotificationPreference");
+const Schedule_1 = require("@/models/Schedule");
+const TimetableReminder_1 = require("@/models/TimetableReminder");
+const Goal_1 = require("@/models/Goal");
+const Task_1 = require("@/models/Task");
+const Message_1 = require("@/models/Message");
+const NikkiNudge_1 = require("@/models/NikkiNudge");
+const Emotion_1 = require("@/models/Emotion");
+const CheckInHistory_1 = require("@/models/CheckInHistory");
+const BreakSession_1 = require("@/models/BreakSession");
+const UsageSession_1 = require("@/models/UsageSession");
+const FocusSession_1 = require("@/models/FocusSession");
+const JournalEntry_1 = require("@/models/JournalEntry");
+const Memory_1 = require("@/models/Memory");
+const currentTime_1 = require("@/lib/time/currentTime");
+const progress_1 = require("@/lib/goals/progress");
+const goalTaskDetection_1 = require("./goalTaskDetection");
+function isQuietHoursCheck(start, end, hour, minute) {
+    if (!start || !end)
+        return false;
+    const currentMins = hour * 60 + minute;
+    const [startH, startM] = start.split(":").map(Number);
+    const [endH, endM] = end.split(":").map(Number);
+    const startMins = startH * 60 + (startM || 0);
+    const endMins = endH * 60 + (endM || 0);
+    if (startMins <= endMins) {
+        return currentMins >= startMins && currentMins < endMins;
+    }
+    return currentMins >= startMins || currentMins < endMins;
+}
+async function buildNikkiContext(firebaseUid, now = new Date(), clientTimezone) {
+    await (0, mongodb_1.connectToDatabase)();
+    const [user, prefs] = await Promise.all([
+        User_1.UserModel.findOne({ firebaseUid }),
+        NotificationPreference_1.NotificationPreferenceModel.findOne({ firebaseUid }),
+    ]);
+    const timezone = (0, currentTime_1.resolveUserTimezone)(clientTimezone, user?.timezone);
+    const userName = user?.displayName?.trim() || "friend";
+    const companionName = user?.companionName?.trim() || "Nikki";
+    // Compute local time & date in user's timezone
+    const parts = new Intl.DateTimeFormat("en-GB", {
+        timeZone: timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    }).formatToParts(now);
+    const partMap = {};
+    for (const p of parts)
+        partMap[p.type] = p.value;
+    const currentHour = parseInt(partMap.hour ?? "0", 10);
+    const currentMinute = parseInt(partMap.minute ?? "0", 10);
+    const totalMinutes = currentHour * 60 + currentMinute;
+    const localTime = `${String(currentHour).padStart(2, "0")}:${String(currentMinute).padStart(2, "0")}`;
+    const localDate = `${partMap.year}-${partMap.month}-${partMap.day}`;
+    // Start of today in user's timezone as UTC Date
+    const startOfDayUtc = (0, currentTime_1.parseDateTimeInTimezone)(localDate, "00:00", timezone);
+    // Quiet hours & pause
+    const quietHoursStart = prefs?.quietHoursStart ?? "22:30";
+    const quietHoursEnd = prefs?.quietHoursEnd ?? "07:00";
+    const isQuietHours = isQuietHoursCheck(quietHoursStart, quietHoursEnd, currentHour, currentMinute);
+    const isPaused = Boolean(prefs?.pausedUntil && new Date(prefs.pausedUntil) > now);
+    const proactiveEnabled = prefs?.proactiveEnabled !== false;
+    const strictness = prefs?.strictness ?? "playful";
+    const checkInFrequency = prefs?.checkInFrequency ?? "balanced";
+    // Usual sleep & wake time
+    const usualBedtime = user?.dailyRhythm?.sleepTime || quietHoursStart || "23:00";
+    const usualWakeTime = user?.dailyRhythm?.wakeTime || quietHoursEnd || "07:30";
+    // Parallel fetch of all connected user context
+    const [scheduleDoc, reminders, allGoalDocs, pendingTaskDocs, recentCompletedTaskDocs, completedTasksTodayCount, lastUserMsg, recentNudges, recentEmotions, todayCheckIns, todayBreakSessionsCount, recentUsageSession, completedFocusSessions, activeFocusSessionDoc, recentJournalDoc, activeMemories,] = await Promise.all([
+        Schedule_1.ScheduleModel.findOne({ firebaseUid, date: localDate }),
+        TimetableReminder_1.TimetableReminderModel.find({ firebaseUid, scheduleDate: localDate }),
+        Goal_1.GoalModel.find({ firebaseUid }),
+        Task_1.TaskModel.find({ firebaseUid, status: { $in: ["PENDING", "IN_PROGRESS"] } }).sort({ dueDate: 1, createdAt: -1 }),
+        Task_1.TaskModel.find({ firebaseUid, status: "COMPLETED" }).sort({ completedAt: -1, updatedAt: -1 }).limit(20),
+        Task_1.TaskModel.countDocuments({ firebaseUid, status: "COMPLETED", updatedAt: { $gte: startOfDayUtc } }),
+        Message_1.MessageModel.findOne({ firebaseUid, role: "user" }).sort({ createdAt: -1 }),
+        NikkiNudge_1.NikkiNudgeModel.find({ firebaseUid }).sort({ createdAt: -1 }).limit(25),
+        Emotion_1.EmotionModel.find({ firebaseUid }).sort({ createdAt: -1 }).limit(5),
+        CheckInHistory_1.CheckInHistoryModel.find({ firebaseUid, createdAt: { $gte: startOfDayUtc } }),
+        BreakSession_1.BreakSessionModel.countDocuments({
+            firebaseUid,
+            createdAt: { $gte: startOfDayUtc },
+            status: { $in: ["active", "extended", "ended"] },
+        }),
+        UsageSession_1.UsageSessionModel.findOne({ firebaseUid, type: "app_active" }).sort({ startedAt: -1 }),
+        FocusSession_1.FocusSessionModel.find({ firebaseUid, status: "COMPLETED" }).sort({ completedAt: -1 }).limit(3),
+        FocusSession_1.FocusSessionModel.findOne({ firebaseUid, status: { $in: ["ACTIVE", "PAUSED"] } }),
+        JournalEntry_1.JournalEntryModel.findOne({ firebaseUid }).sort({ createdAt: -1 }),
+        Memory_1.MemoryModel.find({ firebaseUid, status: "active" }).sort({ lastUsedAt: -1, createdAt: -1 }).limit(5),
+    ]);
+    // Compute avoidance history per task / goal from recent nudges
+    const avoidanceHistory = {};
+    for (const n of recentNudges) {
+        const meta = n.metadata || {};
+        const targetId = meta.targetId || meta.itemId;
+        if (targetId) {
+            avoidanceHistory[targetId] = (avoidanceHistory[targetId] || 0) + 1;
+        }
+    }
+    // Build goal title lookup map (0 extra database queries)
+    const goalTitleMap = new Map();
+    for (const g of allGoalDocs) {
+        goalTitleMap.set(String(g._id), g.title);
+    }
+    // Detect timetable reminders marked "later" or dismissed today
+    const postponedReminderTitles = new Set(reminders
+        .filter((r) => r.status === "later" || r.userDismissedCount > 0)
+        .map((r) => (r.itemTitle || "").trim().toLowerCase()));
+    // Process schedule, unstarted items & missed activities
+    const reminderMap = new Map();
+    for (const r of reminders) {
+        reminderMap.set(`${r.itemStart}_${r.itemTitle}`, r.status);
+    }
+    const scheduleItems = [];
+    const unstartedStartedItems = [];
+    const missedActivities = [];
+    const upcomingActivities = [];
+    const hobbyCandidates = [];
+    let completedActivitiesCountToday = 0;
+    const hasScheduleToday = Boolean(scheduleDoc && scheduleDoc.items && scheduleDoc.items.length > 0);
+    const HOBBY_REGEX = /\b(dance|sing|singing|acting|actor|drama|music|guitar|piano|draw|drawing|paint|art|sketch|write|writing|creative|hobby|hobbies|project|exercise|workout|yoga|run|walk|gym|stretch|rest|relax|meditat|read|reading)\b/i;
+    if (scheduleDoc?.items) {
+        for (const item of scheduleDoc.items) {
+            const status = reminderMap.get(`${item.start}_${item.title}`) ?? "pending";
+            if (status === "done") {
+                completedActivitiesCountToday++;
+            }
+            scheduleItems.push({
+                title: item.title,
+                start: item.start,
+                end: item.end,
+                type: item.type,
+                status,
+            });
+            if (status === "pending" && HOBBY_REGEX.test(item.title)) {
+                hobbyCandidates.push({ title: item.title, source: "schedule", start: item.start });
+            }
+            if (item.type !== "break" && item.type !== "free" && item.start) {
+                const [ih, im] = item.start.split(":").map(Number);
+                const itemStartMins = ih * 60 + (im || 0);
+                const minutesSinceStart = totalMinutes - itemStartMins;
+                const minutesUntilStart = itemStartMins - totalMinutes;
+                // Upcoming activity starting in 5..25 minutes
+                if (minutesUntilStart >= 5 && minutesUntilStart <= 25 && status === "pending") {
+                    upcomingActivities.push({
+                        title: item.title,
+                        start: item.start,
+                        end: item.end,
+                        type: item.type,
+                        minutesUntilStart,
+                    });
+                }
+                // Item started >= 10 minutes ago, but is not marked started or done
+                if (minutesSinceStart >= 10 && minutesSinceStart <= 120) {
+                    if (status !== "started" && status !== "done" && status !== "skipped") {
+                        unstartedStartedItems.push({
+                            title: item.title,
+                            start: item.start,
+                            end: item.end,
+                            minutesSinceStart,
+                        });
+                    }
+                }
+                // Missed activity: end time has passed by >= 15m and status is still pending/unstarted
+                if (item.end) {
+                    const [eh, em] = item.end.split(":").map(Number);
+                    const itemEndMins = eh * 60 + (em || 0);
+                    const minutesLate = totalMinutes - itemEndMins;
+                    if (minutesLate >= 15 && minutesLate <= 300) {
+                        if (status !== "done" && status !== "skipped") {
+                            missedActivities.push({
+                                title: item.title,
+                                start: item.start,
+                                end: item.end,
+                                minutesLate,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Process goals (Part 4A: all statuses, progress, deadlines)
+    const allGoals = [];
+    const activeGoals = [];
+    const completedGoals = [];
+    const overdueGoals = [];
+    const staleGoals = [];
+    const neglectedGoals = [];
+    const highPriorityNeglectedGoals = [];
+    const goalsMakingGoodProgress = [];
+    for (const g of allGoalDocs) {
+        const updatedMs = new Date(g.updatedAt || g.createdAt).getTime();
+        const daysSinceUpdated = !isNaN(updatedMs)
+            ? Math.max(0, Math.floor((now.getTime() - updatedMs) / (1000 * 60 * 60 * 24)))
+            : 0;
+        const deadlineDate = g.deadline && !isNaN(new Date(g.deadline).getTime()) ? new Date(g.deadline) : null;
+        const isOverdue = Boolean(deadlineDate && deadlineDate.getTime() < now.getTime() && g.status !== "COMPLETED");
+        const daysUntilDeadline = deadlineDate
+            ? Math.round((deadlineDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+            : null;
+        const goalId = String(g._id);
+        const avoidCount = avoidanceHistory[goalId] || 0;
+        const targetVal = typeof g.targetValue === "number" && g.targetValue > 0 ? g.targetValue : null;
+        const progressVal = typeof g.progressValue === "number" ? g.progressValue : null;
+        const progressPercent = (0, progress_1.computeProgressPercent)(targetVal, progressVal);
+        // Stale check: HIGH priority stale after 2 days; others after 3 days
+        const staleThreshold = g.priority === "HIGH" ? 2 : 3;
+        const isStale = daysSinceUpdated >= staleThreshold && g.status === "ACTIVE";
+        const completedAtDate = g.completedAt && !isNaN(new Date(g.completedAt).getTime())
+            ? new Date(g.completedAt)
+            : null;
+        const hasGoodProgress = Boolean(g.status === "COMPLETED" ||
+            (progressPercent !== null && progressPercent >= 50) ||
+            (progressPercent !== null && progressPercent > 0 && daysSinceUpdated <= 1));
+        const goalCtx = {
+            id: goalId,
+            title: g.title || "Untitled Goal",
+            description: g.description ?? null,
+            category: g.category ?? null,
+            priority: g.priority ?? "MEDIUM",
+            status: g.status ?? "ACTIVE",
+            deadline: deadlineDate,
+            isOverdue,
+            daysUntilDeadline,
+            daysSinceUpdated,
+            isStale,
+            avoidCount,
+            targetLabel: g.targetLabel ?? null,
+            targetValue: targetVal,
+            progressValue: progressVal,
+            progressPercent,
+            completedAt: completedAtDate,
+            hasGoodProgress,
+        };
+        allGoals.push(goalCtx);
+        if (g.status === "COMPLETED") {
+            completedGoals.push(goalCtx);
+            if (hasGoodProgress)
+                goalsMakingGoodProgress.push(goalCtx);
+        }
+        else if (g.status === "ACTIVE") {
+            activeGoals.push(goalCtx);
+            if (isOverdue)
+                overdueGoals.push(goalCtx);
+            if (isStale) {
+                staleGoals.push(goalCtx);
+                neglectedGoals.push(goalCtx);
+                if (g.priority === "HIGH") {
+                    highPriorityNeglectedGoals.push(goalCtx);
+                }
+            }
+            if (hasGoodProgress) {
+                goalsMakingGoodProgress.push(goalCtx);
+            }
+        }
+    }
+    // Process tasks (Part 4A: pending, completed, overdue, deadlines, postponed)
+    const pendingTasks = [];
+    const incompleteTasks = [];
+    const completedTasks = [];
+    const overdueTasks = [];
+    const staleTasks = [];
+    const postponedTasks = [];
+    const repeatedlyPostponedTasks = [];
+    const importantUnfinishedTasks = [];
+    const approachingDeadlineTasks = [];
+    for (const t of pendingTaskDocs) {
+        const updatedMs = new Date(t.updatedAt || t.createdAt).getTime();
+        const daysSinceUpdated = !isNaN(updatedMs)
+            ? Math.max(0, Math.floor((now.getTime() - updatedMs) / (1000 * 60 * 60 * 24)))
+            : 0;
+        const isStale = daysSinceUpdated >= 3;
+        const dueDate = t.dueDate && !isNaN(new Date(t.dueDate).getTime()) ? new Date(t.dueDate) : null;
+        const isOverdue = Boolean(dueDate && dueDate.getTime() < now.getTime());
+        const daysOverdue = isOverdue && dueDate
+            ? Math.max(1, Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)))
+            : 0;
+        const taskId = String(t._id);
+        const avoidCount = avoidanceHistory[taskId] || 0;
+        const titleLower = (t.title || "").trim().toLowerCase();
+        const reminderPostponedCount = postponedReminderTitles.has(titleLower) ? 1 : 0;
+        const postponeCount = avoidCount + reminderPostponedCount;
+        const isPostponed = postponeCount > 0;
+        const priority = t?.priority || "medium";
+        const goalId = t.goalId ? String(t.goalId) : null;
+        const goalTitle = goalId ? (goalTitleMap.get(goalId) ?? null) : null;
+        const taskCtx = {
+            id: taskId,
+            title: t.title || "Untitled Task",
+            description: t.description ?? null,
+            status: t.status ?? "PENDING",
+            dueDate,
+            goalId,
+            goalTitle,
+            isOverdue,
+            daysOverdue,
+            daysSinceUpdated,
+            isStale,
+            priority,
+            avoidCount,
+            postponeCount,
+            isPostponed,
+            completedAt: null,
+        };
+        pendingTasks.push(taskCtx);
+        incompleteTasks.push(taskCtx);
+        if (isOverdue)
+            overdueTasks.push(taskCtx);
+        if (isStale)
+            staleTasks.push(taskCtx);
+        if (isPostponed)
+            postponedTasks.push(taskCtx);
+        if (postponeCount >= 2 || avoidCount >= 2)
+            repeatedlyPostponedTasks.push(taskCtx);
+        // Important unfinished tasks (high priority or urgent)
+        if (priority === "high" || priority === "urgent") {
+            importantUnfinishedTasks.push(taskCtx);
+        }
+        // Approaching deadline tasks (due in future within next 24 hours)
+        if (dueDate && !isOverdue) {
+            const hoursUntilDue = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+            if (hoursUntilDue >= 0 && hoursUntilDue <= 24) {
+                approachingDeadlineTasks.push({
+                    ...taskCtx,
+                    hoursUntilDue: Math.round(hoursUntilDue * 10) / 10,
+                });
+            }
+        }
+    }
+    // Process completed tasks
+    for (const t of recentCompletedTaskDocs) {
+        const updatedMs = new Date(t.updatedAt || t.createdAt).getTime();
+        const daysSinceUpdated = !isNaN(updatedMs)
+            ? Math.max(0, Math.floor((now.getTime() - updatedMs) / (1000 * 60 * 60 * 24)))
+            : 0;
+        const dueDate = t.dueDate && !isNaN(new Date(t.dueDate).getTime()) ? new Date(t.dueDate) : null;
+        const goalId = t.goalId ? String(t.goalId) : null;
+        const goalTitle = goalId ? (goalTitleMap.get(goalId) ?? null) : null;
+        const completedAt = t.completedAt && !isNaN(new Date(t.completedAt).getTime())
+            ? new Date(t.completedAt)
+            : null;
+        completedTasks.push({
+            id: String(t._id),
+            title: t.title || "Untitled Task",
+            description: t.description ?? null,
+            status: "COMPLETED",
+            dueDate,
+            goalId,
+            goalTitle,
+            isOverdue: false, // completed tasks are NEVER overdue
+            daysOverdue: 0,
+            daysSinceUpdated,
+            isStale: false,
+            priority: t?.priority || "medium",
+            avoidCount: 0,
+            postponeCount: 0,
+            isPostponed: false,
+            completedAt,
+        });
+    }
+    // Focus sessions
+    const latestCompletedFocus = completedFocusSessions[0] || null;
+    let lastFocusSession = null;
+    let isFocusSessionJustFinished = false;
+    if (latestCompletedFocus?.completedAt) {
+        const minsSinceFocus = Math.floor((now.getTime() - new Date(latestCompletedFocus.completedAt).getTime()) / 60000);
+        const durationMinutes = Math.round((latestCompletedFocus.actualDurationSeconds || latestCompletedFocus.plannedDurationSeconds || 0) / 60);
+        lastFocusSession = {
+            status: "COMPLETED",
+            durationMinutes,
+            completedAt: new Date(latestCompletedFocus.completedAt),
+        };
+        if (minsSinceFocus >= 0 && minsSinceFocus <= 15 && durationMinutes >= 20) {
+            isFocusSessionJustFinished = true;
+        }
+    }
+    let activeFocusSession = null;
+    if (activeFocusSessionDoc) {
+        const elapsedMinutes = Math.floor((now.getTime() - new Date(activeFocusSessionDoc.startedAt).getTime()) / 60000);
+        activeFocusSession = {
+            id: String(activeFocusSessionDoc._id),
+            startedAt: new Date(activeFocusSessionDoc.startedAt),
+            elapsedMinutes,
+        };
+    }
+    // Journal entry
+    let recentJournalEntry = null;
+    if (recentJournalDoc) {
+        const hoursSinceEntry = Math.floor((now.getTime() - new Date(recentJournalDoc.createdAt).getTime()) / (1000 * 60 * 60));
+        recentJournalEntry = {
+            title: recentJournalDoc.title,
+            mood: recentJournalDoc.mood || null,
+            createdAt: new Date(recentJournalDoc.createdAt),
+            hoursSinceEntry,
+        };
+    }
+    // Long-Term Memory
+    const memories = activeMemories.map((m) => ({
+        type: m.type,
+        content: m.content,
+        confidence: m.confidence,
+    }));
+    // Conversation history
+    const lastUserMessageAt = lastUserMsg?.createdAt ? new Date(lastUserMsg.createdAt) : null;
+    const minutesSinceLastUserMessage = lastUserMessageAt
+        ? Math.floor((now.getTime() - lastUserMessageAt.getTime()) / 60000)
+        : null;
+    const lastConversationTopic = lastUserMsg?.content ? lastUserMsg.content.slice(0, 100) : null;
+    // Process nudges & outcomes
+    const lastNudgeDoc = recentNudges[0] ?? null;
+    const lastNudge = lastNudgeDoc
+        ? {
+            id: String(lastNudgeDoc._id),
+            trigger: lastNudgeDoc.trigger,
+            message: lastNudgeDoc.message,
+            status: lastNudgeDoc.status,
+            idempotencyKey: lastNudgeDoc.idempotencyKey,
+            createdAt: new Date(lastNudgeDoc.createdAt),
+        }
+        : null;
+    const recentNudgeOutcomes = recentNudges.map((n) => n.status);
+    // Consecutive ignored or dismissed nudges:
+    let consecutiveIgnoredOrDismissedNudges = 0;
+    for (const n of recentNudges) {
+        const nudgeTime = new Date(n.createdAt).getTime();
+        if (lastUserMessageAt && lastUserMessageAt.getTime() > nudgeTime) {
+            break; // user spoke to Nikki after this nudge
+        }
+        if (n.status === "dismissed" || n.status === "expired") {
+            consecutiveIgnoredOrDismissedNudges++;
+        }
+        else if (n.status === "delivered" || n.status === "created") {
+            const ageHours = (now.getTime() - nudgeTime) / (1000 * 60 * 60);
+            if (ageHours >= 3) {
+                consecutiveIgnoredOrDismissedNudges++;
+            }
+        }
+        else if (n.status === "replied" || n.status === "done") {
+            break;
+        }
+    }
+    const recentNudgesToday = recentNudges
+        .filter((n) => new Date(n.createdAt).getTime() >= startOfDayUtc.getTime())
+        .map((n) => ({
+        id: String(n._id),
+        trigger: n.trigger,
+        message: n.message,
+        status: n.status,
+        idempotencyKey: n.idempotencyKey,
+        createdAt: new Date(n.createdAt),
+    }));
+    const nudgesSentTodayCount = recentNudgesToday.length;
+    // Moods
+    const recentMoods = recentEmotions.map((e) => ({
+        emotion: e.emotion,
+        intensity: e.intensity,
+        createdAt: new Date(e.createdAt),
+    }));
+    // Wellbeing counts today
+    let hydrationCountToday = 0;
+    let breakCountToday = todayBreakSessionsCount;
+    for (const c of todayCheckIns) {
+        if ((c.interventionType === "water" || c.triggerType?.includes("water")) &&
+            c.action === "accept") {
+            hydrationCountToday++;
+        }
+        if ((c.interventionType === "break" || c.triggerType?.includes("break")) &&
+            c.action === "accept") {
+            breakCountToday++;
+        }
+    }
+    // App presence & absence
+    const lastSeenAt = prefs?.lastSeenAt
+        ? new Date(prefs.lastSeenAt)
+        : recentUsageSession?.endedAt
+            ? new Date(recentUsageSession.endedAt)
+            : null;
+    const minutesSinceLastSeen = lastSeenAt
+        ? Math.max(0, Math.floor((now.getTime() - lastSeenAt.getTime()) / 60000))
+        : null;
+    // First open of day: user active now, but lastSeen was before wake time or yesterday
+    const [wakeH, wakeM] = (usualWakeTime || "07:30").split(":").map(Number);
+    const wakeMins = (wakeH || 7) * 60 + (wakeM || 30);
+    const isFirstOpenOfDay = Boolean(totalMinutes >= wakeMins &&
+        minutesSinceLastSeen !== null &&
+        minutesSinceLastSeen >= 6 * 60 &&
+        currentHour < 12);
+    // Return after absence: user away for >= 4 hours during active hours (10:00 - 21:00), now back
+    const isReturningAfterAbsence = Boolean(minutesSinceLastSeen !== null &&
+        minutesSinceLastSeen >= 4 * 60 &&
+        currentHour >= 11 &&
+        currentHour <= 21 &&
+        !isFirstOpenOfDay);
+    // Long continuous session check
+    const isRecentSession = Boolean(recentUsageSession &&
+        now.getTime() - new Date(recentUsageSession.endedAt).getTime() <= 15 * 60 * 1000 &&
+        recentUsageSession.durationSeconds >= 45 * 60);
+    const isLongContinuousSession = isRecentSession;
+    const snapshot = {
+        firebaseUid,
+        userName,
+        companionName,
+        timezone,
+        localTime,
+        localDate,
+        currentHour,
+        currentMinute,
+        totalMinutes,
+        quietHoursStart,
+        quietHoursEnd,
+        isQuietHours,
+        morningCheckInEnabled: prefs?.morningCheckInEnabled !== false,
+        morningCheckInTime: prefs?.morningCheckInTime ?? "08:00",
+        eveningCheckInEnabled: prefs?.eveningCheckInEnabled !== false,
+        eveningCheckInTime: prefs?.eveningCheckInTime ?? "20:00",
+        isPaused,
+        pausedUntil: prefs?.pausedUntil ? new Date(prefs.pausedUntil) : null,
+        proactiveEnabled,
+        strictness,
+        checkInFrequency,
+        sleepReminderEnabled: prefs?.sleepReminderEnabled !== false,
+        sleepReminderSnoozeMinutes: prefs?.sleepReminderSnoozeMinutes ?? 25,
+        sleepSnoozeUntil: prefs?.sleepSnoozeUntil ? new Date(prefs.sleepSnoozeUntil) : null,
+        sleepDismissedForDate: prefs?.sleepDismissedForDate ?? null,
+        studyRemindersEnabled: prefs?.studyRemindersEnabled !== false,
+        hobbyRemindersEnabled: prefs?.hobbyRemindersEnabled !== false,
+        isUserExhausted: recentEmotions.some((e) => {
+            const ageHours = (now.getTime() - new Date(e.createdAt).getTime()) / (1000 * 60 * 60);
+            return ["exhausted", "tired", "overwhelmed"].includes(e.emotion.toLowerCase()) && ageHours <= 4;
+        }),
+        upcomingActivities,
+        hobbyCandidates: [
+            ...hobbyCandidates,
+            ...allGoalDocs
+                .filter((g) => g.status === "ACTIVE" && (HOBBY_REGEX.test(g.title) || HOBBY_REGEX.test(g.category || "")))
+                .map((g) => ({ title: g.title, source: "goal", goalId: String(g._id) })),
+        ],
+        hasScheduleToday,
+        scheduleItems,
+        unstartedStartedItems,
+        missedActivities,
+        completedActivitiesCountToday,
+        completedTasksCountToday: completedTasksTodayCount,
+        // Goals & Tasks Awareness (Part 4A)
+        activeGoals,
+        completedGoals,
+        allGoals,
+        overdueGoals,
+        staleGoals,
+        neglectedGoals,
+        highPriorityNeglectedGoals,
+        goalsMakingGoodProgress,
+        pendingTasks,
+        completedTasks,
+        incompleteTasks,
+        overdueTasks,
+        staleTasks,
+        postponedTasks,
+        repeatedlyPostponedTasks,
+        importantUnfinishedTasks,
+        approachingDeadlineTasks,
+        avoidanceHistory,
+        totalPendingTasksCount: pendingTasks.length,
+        lastUserMessageAt,
+        minutesSinceLastUserMessage,
+        lastConversationTopic,
+        memories,
+        lastFocusSession,
+        isFocusSessionJustFinished,
+        activeFocusSession,
+        recentJournalEntry,
+        lastNudge,
+        recentNudgesToday,
+        recentNudgeOutcomes,
+        consecutiveIgnoredOrDismissedNudges,
+        nudgesSentTodayCount,
+        recentMoods,
+        hydrationCountToday,
+        breakCountToday,
+        lastSeenAt,
+        minutesSinceLastSeen,
+        isFirstOpenOfDay,
+        isReturningAfterAbsence,
+        isLongContinuousSession,
+        usualBedtime,
+        usualWakeTime,
+    };
+    snapshot.goalTaskDetections = (0, goalTaskDetection_1.detectAllGoalTaskInsights)(snapshot, { now });
+    return snapshot;
+}

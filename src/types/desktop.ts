@@ -57,7 +57,7 @@ export interface CompanionDesktopAPI {
   hideFloatingNikki: () => void;
 
   /** Open the main Companion conversation window (optionally focused on a new conversation or nudge). */
-  openMainConversation: (payload?: string | { conversationId?: string; nudgeId?: string }) => void;
+  openMainConversation: (payload?: string | { conversationId?: string; nudgeId?: string; focusOnly?: boolean }) => void;
 
   /** Read desktop-specific settings (autoLaunch, floatingVisible). */
   getDesktopSettings?: () => Promise<{ autoLaunch: boolean; floatingVisible: boolean }>;

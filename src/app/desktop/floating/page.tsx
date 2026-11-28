@@ -146,23 +146,27 @@ export default function FloatingNikkiPage() {
   const snoozeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSeenNudgeIdRef = useRef<string | null>(null);
 
-  // ── Task 2 & 5: Set body/html to transparent AFTER first paint so the
-  //   window never flashes an empty transparent frame. We wait for the
-  //   auth state to resolve first so there is always visible content.
+  // ── Task 2: Force html, body and every wrapper to background: transparent
+  //   immediately on mount (overrides globals.css background & background-image).
   useEffect(() => {
-    if (authLoading) return; // Don't go transparent until we know auth state
     const html = document.documentElement;
     const body = document.body;
     const prevHtmlBg = html.style.background;
+    const prevHtmlBgImg = html.style.backgroundImage;
     const prevBodyBg = body.style.background;
+    const prevBodyBgImg = body.style.backgroundImage;
     html.style.background = "transparent";
+    html.style.backgroundImage = "none";
     body.style.background = "transparent";
+    body.style.backgroundImage = "none";
     body.style.overflow = "hidden";
     return () => {
       html.style.background = prevHtmlBg;
+      html.style.backgroundImage = prevHtmlBgImg;
       body.style.background = prevBodyBg;
+      body.style.backgroundImage = prevBodyBgImg;
     };
-  }, [authLoading]);
+  }, []);
 
   // Report auth state directly from floating window so it works even if main window is closed
   useEffect(() => {
@@ -560,56 +564,94 @@ export default function FloatingNikkiPage() {
     ? "wave"
     : "idle";
 
-  // ── Task 2: Always render a visible, non-transparent fallback card while loading.
-  //   This prevents the window from being an empty transparent frame, which makes
-  //   it impossible to see even when positioned correctly.
+  const floatingTransparencyStyle = (
+    <style>{`
+      html, body {
+        background: transparent !important;
+        background-image: none !important;
+        background-color: transparent !important;
+        overflow: hidden !important;
+      }
+    `}</style>
+  );
+
+  // Loading state: transparent background with Nikki's avatar + small loading bubble
   if (authLoading) {
     return (
-      <div className="flex h-screen w-screen flex-col items-end justify-end p-3 select-none"
-           style={{ background: "transparent" }}>
-        <div className="flex items-center gap-2.5 rounded-2xl border border-violet-400/40 bg-[#14132a]/95 px-4 py-3 text-sm text-white shadow-2xl backdrop-blur-md">
-          <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-violet-400" />
-          <span className="text-white/80">Nikki is loading…</span>
+      <div
+        className="flex h-screen w-screen flex-col items-end justify-end p-3 select-none"
+        style={{ background: "transparent" }}
+      >
+        {floatingTransparencyStyle}
+        <div
+          onMouseEnter={handleMouseEnterInteractive}
+          onMouseLeave={handleMouseLeaveInteractive}
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+          className="mb-2 flex items-center gap-2 rounded-2xl border border-violet-400/40 bg-[#14132a]/95 px-3.5 py-2.5 text-xs text-white shadow-2xl backdrop-blur-md"
+        >
+          <span className="h-2 w-2 animate-pulse rounded-full bg-violet-400" />
+          <span className="text-white/85">Nikki is loading…</span>
+        </div>
+        <div
+          onMouseEnter={handleMouseEnterInteractive}
+          onMouseLeave={handleMouseLeaveInteractive}
+          style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+          className="relative cursor-grab drop-shadow-[0_8px_20px_rgba(124,92,255,0.35)] active:cursor-grabbing"
+        >
+          <CompanionCharacter pose="idle" className="h-24 w-24" />
         </div>
       </div>
     );
   }
 
-  // ── Task 3: If the user is not signed in, show a minimal prompt instead of
-  //   an empty transparent window. No iframes or credential URLs — uses IPC.
+  // Not signed in: render Nikki's avatar + small "Open Companion to sign in" bubble
   if (!firebaseUser) {
     return (
-      <div className="flex h-screen w-screen flex-col items-end justify-end p-3 select-none"
-           style={{ background: "transparent" }}>
+      <div
+        className="flex h-screen w-screen flex-col items-end justify-end p-3 select-none"
+        style={{ background: "transparent" }}
+      >
+        {floatingTransparencyStyle}
         <div
           onMouseEnter={handleMouseEnterInteractive}
           onMouseLeave={handleMouseLeaveInteractive}
-          className="flex flex-col items-end gap-2.5 rounded-2xl border border-violet-400/40 bg-[#14132a]/95 px-4 py-3 text-sm text-white shadow-2xl backdrop-blur-md"
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+          className="mb-2 flex flex-col items-end gap-2 rounded-2xl border border-violet-400/40 bg-[#14132a]/95 px-3.5 py-3 text-sm text-white shadow-2xl backdrop-blur-md"
         >
           <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-violet-400" />
-            <span className="text-white/90 text-[13px]">Open Companion to sign in</span>
+            <span className="h-2 w-2 rounded-full bg-violet-400" />
+            <span className="text-[12.5px] text-white/90">Open Companion to sign in</span>
           </div>
           <button
             type="button"
             onClick={() => {
-              if (window.companionDesktop?.openMainConversation) {
-                window.companionDesktop.openMainConversation(undefined);
-              }
+              window.companionDesktop?.openMainConversation({ focusOnly: true });
             }}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-violet-500 px-3 py-1.5 text-[12px] font-medium text-white transition hover:bg-violet-400"
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-violet-500 px-3 py-1.5 text-[11.5px] font-medium text-white transition hover:bg-violet-400"
           >
             <LogIn className="h-3.5 w-3.5" />
-            Sign in to Companion
+            Open Companion
           </button>
+        </div>
+        <div
+          onMouseEnter={handleMouseEnterInteractive}
+          onMouseLeave={handleMouseLeaveInteractive}
+          style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+          className="relative cursor-grab drop-shadow-[0_8px_20px_rgba(124,92,255,0.35)] active:cursor-grabbing"
+        >
+          <CompanionCharacter pose="wave" className="h-24 w-24" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen w-screen flex-col items-end justify-end p-3 select-none"
-         style={{ background: "transparent" }}>
+    <div
+      className="flex h-screen w-screen flex-col items-end justify-end p-3 select-none"
+      style={{ background: "transparent" }}
+    >
+      {floatingTransparencyStyle}
       {/* Compact Contextual Reminder / Check-in Card (NO chat input or history) */}
       <AnimatePresence>
         {nudge && !overlayState.minimized && (
@@ -619,6 +661,7 @@ export default function FloatingNikkiPage() {
             exit={{ opacity: 0, y: 8, scale: 0.94 }}
             onMouseEnter={handleMouseEnterInteractive}
             onMouseLeave={handleMouseLeaveInteractive}
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             className="mb-2 w-[288px] rounded-2xl border border-white/15 bg-[#14132a]/95 p-3.5 text-sm text-white shadow-2xl backdrop-blur-md"
           >
             <div className="flex items-start justify-between gap-2">
@@ -815,14 +858,12 @@ export default function FloatingNikkiPage() {
       <div
         onMouseEnter={handleMouseEnterInteractive}
         onMouseLeave={handleMouseLeaveInteractive}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
         onClick={handleAvatarClick}
-        className="group relative flex cursor-grab flex-col items-center active:cursor-grabbing"
+        className="group relative flex flex-col items-center"
       >
-        {/* Subtle hover control bar */}
+        {/* Subtle hover control bar (no-drag so all buttons remain clickable) */}
         <div
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
           className={`mb-1 flex items-center gap-1 rounded-full border border-white/15 bg-[#14132a]/90 px-2 py-0.5 shadow-lg backdrop-blur-md transition-opacity duration-150 ${
             isHovered ? "opacity-100" : "pointer-events-none opacity-0"
           }`}
@@ -866,13 +907,19 @@ export default function FloatingNikkiPage() {
           </button>
         </div>
 
-        {/* Minimized pill vs Animated CompanionCharacter */}
+        {/* Minimized pill vs Animated CompanionCharacter (draggable via -webkit-app-region: drag) */}
         {overlayState.minimized ? (
-          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-violet-400/40 bg-[#161533]/90 shadow-lg backdrop-blur-md">
+          <div
+            style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+            className="flex h-12 w-12 cursor-grab items-center justify-center rounded-full border border-violet-400/40 bg-[#161533]/90 shadow-lg backdrop-blur-md active:cursor-grabbing"
+          >
             <CompanionCharacter pose="idle" className="h-10 w-10" />
           </div>
         ) : (
-          <div className="relative drop-shadow-[0_8px_20px_rgba(124,92,255,0.35)]">
+          <div
+            style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+            className="relative cursor-grab drop-shadow-[0_8px_20px_rgba(124,92,255,0.35)] active:cursor-grabbing"
+          >
             <CompanionCharacter pose={currentPose} className="h-24 w-24" />
           </div>
         )}

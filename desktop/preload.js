@@ -114,10 +114,11 @@ contextBridge.exposeInMainWorld("companionDesktop", {
   openMainConversation: (payload) => {
     const normalized =
       typeof payload === "string"
-        ? { nudgeId: payload, conversationId: null }
+        ? { nudgeId: payload, conversationId: null, focusOnly: false }
         : {
             conversationId: typeof payload?.conversationId === "string" ? payload.conversationId : null,
             nudgeId: typeof payload?.nudgeId === "string" ? payload.nudgeId : null,
+            focusOnly: Boolean(payload?.focusOnly),
           };
     ipcRenderer.send("companion:open-conversation", normalized);
   },
